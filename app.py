@@ -215,6 +215,14 @@ def get_weekly_roster_data(week_num):
         con.close()
         return {"error": f"An error occurred: {e}"}
 
+# --- Database Initialization Logic for Render ---
+# This code will run once when the application starts.
+if not os.path.exists('projections.db'):
+    print("Database not found, initializing...")
+    init_db()
+    print("Database initialized.")
+# ----------------------------------------------
+
 
 @app.route("/api/rosters/week/<int:week_num>")
 @auth.login_required
