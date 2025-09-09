@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+venv/
+env/
+
+# Credentials & Data (IMPORTANT)
+credentials.json
+private.json
+projections.db
+*.csv.bak
+
+# OS-specific
+.DS_Store
