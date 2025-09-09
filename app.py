@@ -25,21 +25,25 @@ auth = HTTPBasicAuth()
 
 # --- NEW: Set your desired username and password here for the live app ---
 users = {
-    "your_username": "your_password",
-    "1": "1"
+    "your_username": "your_passwowrd",
+    "4": ""
 }
 # --------------------------------------------------------------------
 
 DB_FILE = "projections.db"
 YAHOO_LEAGUE_KEY = '453.l.2200'
+YAHOO_CREDENTIALS_FILE = 'private.json'  # Always use this filename
 
+# --- CORRECTED: Credential Handling for Render & Local ---
+# This block writes the environment variable to a file if it exists.
 private_content = os.environ.get('YAHOO_PRIVATE_JSON')
 if private_content:
-    print("Loading Yahoo credentials from environment variable.")
-    YAHOO_CREDENTIALS_FILE = StringIO(private_content)
+    print("YAHOO_PRIVATE_JSON environment variable found. Writing to file.")
+    with open(YAHOO_CREDENTIALS_FILE, 'w') as f:
+        f.write(private_content)
 else:
-    print("Loading Yahoo credentials from local private.json file.")
-    YAHOO_CREDENTIALS_FILE = 'private.json'
+    print("YAHOO_PRIVATE_JSON not found. Assuming local private.json file exists.")
+# ---------------------------------------------------------
 
 @auth.verify_password
 def verify_password(username, password):
