@@ -1,299 +1,44 @@
 """
-Fantasy Hockey Matchup Optimizer
-
-Author: Jason Druckenmiller
-Date Created: 09/08/2025
-Last Updated: 09/09/2055
+This module contains all the Flask routes (API endpoints) for the application.
+It uses a Flask Blueprint to keep the routes organized and separate from the main
+application initialization logic.
 """
-# app.py
-
-import os
 import sqlite3
 import json
-from datetime import datetime, date, timedelta
-from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
-from flask_httpauth import HTTPBasicAuth
-import yahoo_fantasy_api as yfa
-from yahoo_oauth import OAuth2
-from io import StringIO
+from datetime import date, timedelta, datetime
+from flask import Blueprint, jsonify, request, send_from_directory
 
-# --- App Initialization & Config ---
-app = Flask(__name__)
-CORS(app)
-auth = HTTPBasicAuth()
+from . import config
+from .auth import auth
+from .data_helpers import get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team
+from .optimization_logic import find_optimal_lineup
 
-# --- NEW: Set your desired username and password here for the live app ---
-users = {
-    "your_username": "your_passwowrd",
-    "4": ""
-}
-# --------------------------------------------------------------------
+# Create a Blueprint. This is Flask's way of organizing groups of related routes.
+api_bp = Blueprint('api', __name__)
 
-DB_FILE = "projections.db"
-YAHOO_LEAGUE_KEY = '453.l.2200'
-YAHOO_CREDENTIALS_FILE = 'private.json'  # Always use this filename
-
-# --- CORRECTED: Credential Handling for Render & Local ---
-# This block writes the environment variable to a file if it exists.
-private_content = os.environ.get('YAHOO_PRIVATE_JSON')
-if private_content:
-    print("YAHOO_PRIVATE_JSON environment variable found. Writing to file.")
-    with open(YAHOO_CREDENTIALS_FILE, 'w') as f:
-        f.write(private_content)
-else:
-    print("YAHOO_PRIVATE_JSON not found. Assuming local private.json file exists.")
-# ---------------------------------------------------------
-
-@auth.verify_password
-def verify_password(username, password):
-    if username in users and users[username] == password:
-        return username
-
-# --- NEW: Routes to serve the frontend files ---
-@app.route('/')
+# --- Route to serve the main HTML file ---
+@api_bp.route('/')
 @auth.login_required
 def index():
-    return send_from_directory('.', 'index.html')
+    """
+    Serves the main index.html file from the project's root directory.
+    We go 'up' one level from the current blueprint's directory.
+    """
+    return send_from_directory('..', 'index.html')
 
-@app.route('/app.js')
-@auth.login_required
-def js():
-    return send_from_directory('.', 'app.js')
-# -----------------------------------------------
+# --- API Routes ---
 
-# --- HELPER: Core Optimization Logic ---
-def find_optimal_lineup(active_players, category_weights={}):
-    # ... (this function remains the same)
-    def safe_get_stat(player, stat_name):
-        try:
-            proj = player.get('per_game_projections', {})
-            return float(proj.get(stat_name, 0))
-        except (ValueError, TypeError): return 0
-
-    def calculate_marginal_value(player, weights):
-        if not weights: return safe_get_stat(player, 'pts')
-        value = 0
-        inverse_stats = ['ga']
-        for stat, weight in weights.items():
-            player_stat = safe_get_stat(player, stat)
-            value += -player_stat * weight if stat in inverse_stats else player_stat * weight
-        return value
-
-    ir_players = [p for p in active_players if 'IR' in p.get('positions', '') or 'IR+' in p.get('positions', '')]
-    eligible_players = [p for p in active_players if p not in ir_players]
-
-    for p in eligible_players:
-        p['marginal_value'] = calculate_marginal_value(p, category_weights)
-
-    eligible_skaters = [p for p in eligible_players if 'G' not in p.get('positions', '').split(', ')]
-    eligible_goalies = [p for p in eligible_players if 'G' in p.get('positions', '').split(', ')]
-
-    eligible_goalies.sort(key=lambda p: safe_get_stat(p, 'w'), reverse=True)
-    optimal_goalies = [(g, 'G') for g in eligible_goalies[:2]]
-    benched_goalies = eligible_goalies[2:]
-
-    eligible_skaters.sort(key=lambda p: p.get('marginal_value', 0), reverse=True)
-
-    memo = {}
-    ordered_skater_slots = ['C', 'LW', 'RW', 'D']
-
-    def solve_skaters(player_index, slots_tuple):
-        if player_index == len(eligible_skaters): return 0, []
-        state = (player_index, slots_tuple)
-        if state in memo: return memo[state]
-
-        slots = dict(zip(ordered_skater_slots, slots_tuple))
-        player = eligible_skaters[player_index]
-        best_score, best_lineup = solve_skaters(player_index + 1, slots_tuple)
-
-        player_positions = [p for p in player.get('positions', '').split(', ') if p in slots]
-        for pos in player_positions:
-            if slots[pos] > 0:
-                new_slots = slots.copy(); new_slots[pos] -= 1
-                path_score, path_lineup = solve_skaters(player_index + 1, tuple(new_slots.values()))
-                current_score = player.get('marginal_value', 0) + path_score
-
-                if current_score > best_score:
-                    best_score, best_lineup = current_score, [(player, pos)] + path_lineup
-
-        memo[state] = (best_score, best_lineup)
-        return best_score, best_lineup
-
-    initial_skater_slots = {'C': 2, 'LW': 2, 'RW': 2, 'D': 4}
-    _, optimal_skaters = solve_skaters(0, tuple(initial_skater_slots[s] for s in ordered_skater_slots))
-
-    optimal_roster = optimal_skaters + optimal_goalies
-
-    optimal_player_names = {p['name'] for p, pos in optimal_roster}
-    benched_skaters = [p for p in eligible_skaters if p['name'] not in optimal_player_names]
-    benched_players = benched_skaters + benched_goalies + ir_players
-
-    return optimal_roster, benched_players
-
-def get_weekly_roster_data(week_num):
-    # ... (this function remains the same as the previous version)
-    # --- 1. Connect to DB and get week start/end dates ---
-    con = sqlite3.connect(DB_FILE)
-    con.row_factory = sqlite3.Row
-    cur = con.cursor()
-
-    cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
-    week_info = cur.fetchone()
-    if not week_info:
-        return {"error": f"Fantasy week {week_num} not found in the database."}
-
-    week_start_date = datetime.fromisoformat(week_info['start_date']).date()
-    week_end_date = datetime.fromisoformat(week_info['end_date']).date()
-
-    # --- 2. Get games per team for the specified week ---
-    games_this_week = {}
-    cur.execute("SELECT team_tricode, schedule_json FROM team_schedules")
-    all_schedules = cur.fetchall()
-    for row in all_schedules:
-        team_tricode = row['team_tricode']
-        schedule_dates = json.loads(row['schedule_json'])
-        game_count = 0
-        for date_str in schedule_dates:
-            game_date = datetime.fromisoformat(date_str).date()
-            if week_start_date <= game_date <= week_end_date:
-                game_count += 1
-        games_this_week[team_tricode] = game_count
-
-    # --- 3. Fetch Yahoo Fantasy Rosters ---
-    if not os.path.exists('private.json') and not private_content:
-         return {"error": "Yahoo credentials not found"}
-
-    try:
-        oauth = OAuth2(None, None, from_file=YAHOO_CREDENTIALS_FILE)
-        if not oauth.token_is_valid(): oauth.refresh_access_token()
-
-        game = yfa.Game(oauth, 'nhl')
-        lg = game.to_league(YAHOO_LEAGUE_KEY)
-        all_rosters = {}
-        all_teams_data = lg.teams()
-
-        # --- 4. Combine all data for each player ---
-        for team_key, team_info in all_teams_data.items():
-            team_name = team_info['name']
-            team = lg.to_team(team_key)
-            roster = team.roster()
-            roster_data = []
-
-            for player in roster:
-                cur.execute("SELECT * FROM projections WHERE player_name = ?", (player['name'],))
-                projection_row = cur.fetchone()
-
-                player_projections = dict(projection_row) if projection_row else {}
-                player_team_tricode = player_projections.get('team', 'N/A').upper() if player_projections else 'N/A'
-
-                # Calculate weekly stats
-                weekly_projections = {}
-                num_games = games_this_week.get(player_team_tricode, 0)
-                for stat, value in player_projections.items():
-                    if stat not in ['player_name', 'team'] and value is not None:
-                        try:
-                            numeric_value = float(value)
-                            weekly_stat = round(numeric_value * num_games, 2)
-                            weekly_projections[stat] = weekly_stat
-                        except (ValueError, TypeError):
-                            continue
-
-                player_data = {
-                    "name": player['name'],
-                    "positions": ', '.join(player['eligible_positions']),
-                    "team": player_team_tricode,
-                    "status": player.get('status', 'OK'),
-                    "games_this_week": num_games,
-                    "weekly_projections": weekly_projections,
-                    "per_game_projections": player_projections
-                }
-                roster_data.append(player_data)
-
-            all_rosters[team_name] = roster_data
-
-        con.close()
-        return all_rosters
-
-    except Exception as e:
-        con.close()
-        return {"error": f"An error occurred: {e}"}
-
-
-@app.route("/api/rosters/week/<int:week_num>")
+@api_bp.route("/api/rosters/week/<int:week_num>")
 @auth.login_required
 def api_get_rosters_for_week(week_num):
+    """API endpoint to get raw roster data for a specific week."""
     print(f"API endpoint hit for week {week_num}. Fetching data...")
     rosters = get_weekly_roster_data(week_num)
     return jsonify(rosters)
 
-def calculate_optimized_totals(roster, week_num, schedules, week_dates, transactions=[]):
-    # ... (this function remains the same)
-    totals = {}
-    daily_lineups = {}
-    goalie_avg_stats = ['svpct', 'ga']
-    goalie_stat_numerator = {stat: 0 for stat in goalie_avg_stats}
-    total_goalie_starts = 0
-
-    simulated_roster = list(roster)
-    transactions.sort(key=lambda x: x['date'])
-    trans_index = 0
-
-    current_date = week_dates['start']
-    while current_date <= week_dates['end']:
-        date_str = current_date.isoformat()
-
-        while trans_index < len(transactions) and transactions[trans_index]['date'] == date_str:
-            move = transactions[trans_index]
-            simulated_roster = [p for p in simulated_roster if p['name'] != move['drop']]
-            con = sqlite3.connect(DB_FILE)
-            con.row_factory = sqlite3.Row
-            cur = con.cursor()
-            cur.execute("SELECT * FROM projections WHERE player_name = ?", (move['add'],))
-            new_player_proj = cur.fetchone()
-            con.close()
-            if new_player_proj:
-                new_player_data = {
-                    'name': move['add'],
-                    'positions': new_player_proj['positions'] or '',
-                    'team': new_player_proj['team'],
-                    'per_game_projections': dict(new_player_proj)
-                }
-                simulated_roster.append(new_player_data)
-            trans_index += 1
-
-        active_today = [p for p in simulated_roster if p.get('team') in schedules and date_str in schedules[p.get('team')]]
-
-        optimal_roster_tuples = []
-        if active_today:
-            optimal_roster_tuples, _ = find_optimal_lineup(active_today)
-            daily_lineups[date_str] = optimal_roster_tuples
-
-            for player, pos_filled in optimal_roster_tuples:
-                for stat, value in player['per_game_projections'].items():
-                    if stat in ['player_name', 'team']: continue
-                    try:
-                        numeric_value = float(value)
-                        if 'G' in player.get('positions', '') and stat in goalie_avg_stats:
-                            goalie_stat_numerator[stat] += numeric_value
-                        else:
-                            totals[stat] = totals.get(stat, 0) + numeric_value
-                    except (ValueError, TypeError): continue
-                if 'G' in player.get('positions', ''):
-                    total_goalie_starts += 1
-        current_date += timedelta(days=1)
-
-    for stat in goalie_avg_stats:
-        totals[stat] = (goalie_stat_numerator[stat] / total_goalie_starts) if total_goalie_starts > 0 else 0
-
-    for stat, value in totals.items():
-        totals[stat] = round(value, 3 if stat == 'svpct' else 2)
-    return totals, daily_lineups, simulated_roster
-
-@app.route("/api/matchup")
+@api_bp.route("/api/matchup")
 @auth.login_required
 def api_get_matchup():
-    # ... (this function remains the same)
     week_num = request.args.get('week', type=int)
     team1_name = request.args.get('team1', type=str)
     team2_name = request.args.get('team2', type=str)
@@ -310,7 +55,7 @@ def api_get_matchup():
         if not team1_roster or not team2_roster:
             return jsonify({"error": "One or both team names not found"}), 404
 
-        con = sqlite3.connect(DB_FILE)
+        con = sqlite3.connect(config.DB_FILE)
         cur = con.cursor()
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
         week_info = cur.fetchone()
@@ -326,22 +71,8 @@ def api_get_matchup():
         team1_full_proj, _, _ = calculate_optimized_totals(team1_roster, week_num, schedules, full_week_dates)
         team2_full_proj, _, _ = calculate_optimized_totals(team2_roster, week_num, schedules, full_week_dates)
 
-        oauth = OAuth2(None, None, from_file=YAHOO_CREDENTIALS_FILE)
-        if not oauth.token_is_valid(): oauth.refresh_access_token()
-        game = yfa.Game(oauth, 'nhl')
-        lg = game.to_league(YAHOO_LEAGUE_KEY)
-
-        team_keys = {t['name']: t['team_key'] for t in lg.teams().values()}
-
-        team1_live_stats = {}
-        team2_live_stats = {}
-        try:
-            matchup_data = lg.matchup(week_num)
-            team1_live_stats = matchup_data['teams'][team_keys[team1_name]]['stats']
-            team2_live_stats = matchup_data['teams'][team_keys[team2_name]]['stats']
-        except Exception as e:
-             print(f"Could not fetch live matchup data (this is expected for past/future weeks): {e}")
-
+        team1_live_stats = get_live_stats_for_team(team1_name, week_num)
+        team2_live_stats = get_live_stats_for_team(team2_name, week_num)
 
         today = date.today()
         remainder_start = max(today, full_week_dates['start'])
@@ -375,10 +106,9 @@ def api_get_matchup():
         print(f"An unexpected error in /api/matchup: {e}")
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
-@app.route("/api/simulate-week", methods=['POST'])
+@api_bp.route("/api/simulate-week", methods=['POST'])
 @auth.login_required
 def api_simulate_week():
-    # ... (this function remains the same)
     data = request.json
     week_num = data.get('week')
     my_team_name = data.get('my_team')
@@ -397,7 +127,7 @@ def api_simulate_week():
         if not my_roster or not opponent_roster:
             return jsonify({"error": "Team names not found"}), 404
 
-        con = sqlite3.connect(DB_FILE)
+        con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
@@ -438,10 +168,9 @@ def api_simulate_week():
         print(f"An unexpected error in /api/simulate-week: {e}")
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
-@app.route("/api/optimizer")
+@api_bp.route("/api/optimizer")
 @auth.login_required
 def api_optimizer():
-    # ... (this function remains the same)
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
     week_num = request.args.get('week', type=int)
@@ -461,7 +190,7 @@ def api_optimizer():
         if not my_roster or not opponent_roster:
             return jsonify({"error": "One or both team names not found"}), 404
 
-        con = sqlite3.connect(DB_FILE)
+        con = sqlite3.connect(config.DB_FILE)
         cur = con.cursor()
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
         week_info = cur.fetchone()
@@ -507,10 +236,9 @@ def api_optimizer():
         print(f"An unexpected error in /api/optimizer: {e}")
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
-@app.route("/api/weekly-optimizer")
+@api_bp.route("/api/weekly-optimizer")
 @auth.login_required
 def api_weekly_optimizer():
-    # ... (this function remains the same)
     team_name = request.args.get('team', type=str)
     week_num = request.args.get('week', type=int)
 
@@ -523,7 +251,7 @@ def api_weekly_optimizer():
         team_roster = all_rosters.get(team_name)
         if not team_roster: return jsonify({"error": f"Team '{team_name}' not found"}), 404
 
-        con = sqlite3.connect(DB_FILE)
+        con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
@@ -575,11 +303,10 @@ def api_weekly_optimizer():
         print(f"An unexpected error in /api/weekly-optimizer: {e}")
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
-# --- Free Agent Finder using Database as Source of Truth ---
-@app.route("/api/free-agents")
+
+@api_bp.route("/api/free-agents")
 @auth.login_required
 def api_free_agents():
-    # ... (this function remains the same)
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
     week_num = request.args.get('week', type=int)
@@ -598,7 +325,7 @@ def api_free_agents():
 
         rostered_player_names = {p['name'] for r in all_rosters.values() for p in r}
 
-        con = sqlite3.connect(DB_FILE)
+        con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
@@ -697,5 +424,68 @@ def api_free_agents():
         print(f"An unexpected error in /api/free-agents: {e}")
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True)
+@api_bp.route("/api/goalie-scenarios")
+@auth.login_required
+def api_goalie_scenarios():
+    team_name = request.args.get('team', type=str)
+    week_num = request.args.get('week', type=int)
+    starts = request.args.get('starts', type=int, default=1)
+
+    if not all([team_name, week_num]):
+        return jsonify({"error": "Missing team and week parameters"}), 400
+
+    try:
+        live_stats = get_live_stats_for_team(team_name, week_num)
+
+        # Extract current totals to simulate against.
+        current_ga = float(live_stats.get('ga', 0))
+        current_sv = float(live_stats.get('sv', 0))
+        # GS isn't a stat from Yahoo, so we have to derive shots against
+        # total_shots = saves / save_percentage if svpct is not 0
+        svpct = float(live_stats.get('svpct', 0))
+        current_shots_against = current_sv / svpct if svpct > 0 else 0
+
+        # Calculate current GAA. Yahoo provides this directly.
+        current_gaa = float(live_stats.get('gaa', 0.0))
+
+        # Define hypothetical scenarios for future starts
+        scenarios_def = [
+            {"name": "Excellent Start", "ga": 1, "svpct": 0.960},
+            {"name": "Good Start", "ga": 2, "svpct": 0.925},
+            {"name": "Average Start", "ga": 3, "svpct": 0.900},
+            {"name": "Bad Start", "ga": 4, "svpct": 0.850},
+            {"name": "Disaster Start", "ga": 5, "svpct": 0.800},
+        ]
+
+        results = []
+        for scenario in scenarios_def:
+            # Assume an average of 30 shots per game for hypotheticals
+            hypo_shots = 30 * starts
+            hypo_sv = hypo_shots * scenario["svpct"]
+            hypo_ga = hypo_shots - hypo_sv # Or just use scenario['ga'] if we assume per-game
+
+            # For simplicity, let's use the defined GA for the scenario per number of starts
+            new_total_ga = current_ga + (scenario["ga"] * starts)
+            new_total_sv = current_sv + hypo_sv
+            new_total_shots = current_shots_against + hypo_shots
+
+            # To calculate new GAA, we need total games played. Yahoo doesn't provide this.
+            # We will simulate the SV% which is more reliable.
+            new_svpct = new_total_sv / new_total_shots if new_total_shots > 0 else 0
+
+            # We can't accurately calculate the new GAA without knowing the GP, so we'll pass a placeholder
+            results.append({
+                "name": f"{starts} {scenario['name']}(s)",
+                "gaa": "N/A", # Placeholder
+                "svpct": new_svpct
+            })
+
+        return jsonify({
+            "current_gaa": current_gaa,
+            "current_svpct": svpct,
+            "scenarios": results
+        })
+
+    except Exception as e:
+        print(f"An unexpected error in /api/goalie-scenarios: {e}")
+        return jsonify({"error": "An unexpected server error occurred."}), 500
