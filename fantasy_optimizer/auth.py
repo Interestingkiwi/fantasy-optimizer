@@ -3,6 +3,7 @@ Handles Yahoo OAuth2 authentication for the application.
 """
 import os
 import json
+import time
 from urllib.parse import urlencode
 import requests
 from requests.auth import HTTPBasicAuth
@@ -12,24 +13,16 @@ from . import config
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
-def get_oauth_client(token=None, token_secret=None):
+def get_oauth_client(token_data=None):
     """Creates an OAuth2 client instance, used for making API calls after authentication."""
     redirect_uri = url_for('auth.callback', _external=True)
 
     if '127.0.0.1' not in redirect_uri and 'localhost' not in redirect_uri:
         redirect_uri = redirect_uri.replace('http://', 'https')
 
-    # The library expects 'refresh_token' in its token dictionary for refreshing.
-    # It confusingly uses 'token_secret' as the variable name for this in OAuth2.
-    token_dict = {
-        'access_token': token,
-        'refresh_token': token_secret,
-        'token_type': 'bearer'
-    } if token else None
-
-    # Pass the full token dict, allowing the library to refresh correctly later.
+    # Pass the full token dictionary, allowing the library to refresh correctly.
     return OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE,
-                  token=token_dict,
+                  token=token_data,
                   redirect_uri=redirect_uri)
 
 @auth_bp.route('/login')
@@ -113,10 +106,11 @@ def callback():
             print(f"Error: Token data incomplete. Response: {token_data}")
             return "Failed to retrieve complete tokens from Yahoo.", 500
 
-        session['yahoo_token'] = token_data['access_token']
-        session['yahoo_token_secret'] = token_data['refresh_token']
+        # Store the entire token dictionary, including expires_in and calculate expiration time.
+        token_data['token_time'] = time.time()
+        session['yahoo_token_data'] = token_data
         session.permanent = True
-        print("Successfully stored tokens in session via manual exchange.")
+        print("Successfully stored full token data in session via manual exchange.")
 
     except requests.exceptions.RequestException as e:
         print(f"Error during manual token exchange: {e.response.text if e.response else e}")
@@ -132,7 +126,7 @@ def status():
     """
     Checks if the current user has valid Yahoo tokens in their session.
     """
-    if 'yahoo_token' in session and 'yahoo_token_secret' in session:
+    if 'yahoo_token_data' in session:
         return jsonify({'logged_in': True})
     return jsonify({'logged_in': False})
 
