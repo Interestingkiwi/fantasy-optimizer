@@ -1,4 +1,8 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // --- Configuration ---
+    const HOSTING_ENVIRONMENT = 'localhost'; // Toggle between 'localhost' and 'web'
+    const API_BASE_URL = HOSTING_ENVIRONMENT === 'localhost' ? 'http://127.0.0.1:5000' : '';
+
     // --- Element References ---
     const myTeamSelector = document.getElementById('myTeamSelector');
     const opponentSelector = document.getElementById('opponentSelector');
@@ -45,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchAndPopulateSelectors() {
         const selectedWeek = weekSelector.value;
         try {
-            const response = await fetch(`/api/rosters/week/${selectedWeek}`);
+            const response = await fetch(`${API_BASE_URL}/api/rosters/week/${selectedWeek}`);
             currentRosterData = await handleResponse(response);
             populateTeamSelectors(currentRosterData);
         } catch (error) {
@@ -72,7 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         showLoading(matchupContainer, `Loading matchup...`);
         try {
-            const response = await fetch(`/api/matchup?week=${week}&team1=${myTeam}&team2=${opponent}`);
+            const response = await fetch(`${API_BASE_URL}/api/matchup?week=${week}&team1=${myTeam}&team2=${opponent}`);
             const data = await handleResponse(response);
             matchupContainer.innerHTML = '';
             matchupContainer.appendChild(createSummaryTable(myTeam, data[myTeam].full_week_proj, data[myTeam].live_proj, opponent, data[opponent].full_week_proj, data[opponent].live_proj));
@@ -108,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showLoading(utilizationContainer, ''); // Also show loading indicator here
 
         try {
-            const response = await fetch(`/api/simulate-week`, {
+            const response = await fetch(`${API_BASE_URL}/api/simulate-week`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ week, my_team: myTeam, opponent, transactions })
@@ -134,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const week = weekSelector.value;
         showLoading(utilizationContainer, `Analyzing utilization...`);
         try {
-            const response = await fetch(`/api/weekly-optimizer?team=${myTeam}&week=${week}`);
+            const response = await fetch(`${API_BASE_URL}/api/weekly-optimizer?team=${myTeam}&week=${week}`);
             const data = await handleResponse(response);
             utilizationContainer.innerHTML = '';
             utilizationContainer.appendChild(createUtilizationTable(data.roster_utilization, `Roster Utilization`));
@@ -157,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showLoading(optimizerContainer, `Finding optimal lineup for ${date}...`);
 
         try {
-            const response = await fetch(`/api/optimizer?my_team=${myTeam}&opponent=${opponent}&week=${week}&date=${date}`);
+            const response = await fetch(`${API_BASE_URL}/api/optimizer?my_team=${myTeam}&opponent=${opponent}&week=${week}&date=${date}`);
             const data = await handleResponse(response);
             optimizerContainer.innerHTML = '';
 
@@ -196,7 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showLoading(freeAgentContainer, 'Searching for top free agents...');
 
         try {
-            const response = await fetch(`/api/free-agents?my_team=${myTeam}&opponent=${opponent}&week=${week}&start=${startIndex}`);
+            const response = await fetch(`${API_BASE_URL}/api/free-agents?my_team=${myTeam}&opponent=${opponent}&week=${week}&start=${startIndex}`);
             const data = await handleResponse(response);
             allFreeAgents = data.free_agents; // Store for simulator
 
@@ -218,7 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         showLoading(goalieContainer, `Calculating scenarios for ${starts} future start(s)...`);
         try {
-            const response = await fetch(`/api/goalie-scenarios?team=${myTeam}&week=${week}&starts=${starts}`);
+            const response = await fetch(`${API_BASE_URL}/api/goalie-scenarios?team=${myTeam}&week=${week}&starts=${starts}`);
             const data = await handleResponse(response);
             goalieContainer.innerHTML = '';
             goalieContainer.appendChild(createGoalieScenariosTable(data));
@@ -233,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showLoading(rostersContainer, `Loading raw roster data for week ${selectedWeek}...`);
         clearAllSections(rostersContainer);
          try {
-            const response = await fetch(`/api/rosters/week/${selectedWeek}`);
+            const response = await fetch(`${API_BASE_URL}/api/rosters/week/${selectedWeek}`);
             const allRosters = await handleResponse(response);
             rostersContainer.innerHTML = '';
             for (const teamName in allRosters) {
@@ -557,7 +561,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (player.weekly_projections && player.weekly_projections[statToDisplay] !== undefined) {
                 weeklyStat = player.weekly_projections[statToDisplay];
             }
-            tbody.innerHTML += `<tr><td>${player.name}</td><td>${player.positions}</td><td>${player.team}</td><td>${player.games_this_week}</td><td>${weeklyStat}</td></tr>`;
+            tbody.innerHTML += `<tr><td>${p.name}</td><td>${p.positions}</td><td>${p.team}</td><td>${p.games_this_week}</td><td>${weeklyStat}</td></tr>`;
         });
         table.appendChild(tbody);
         return table;

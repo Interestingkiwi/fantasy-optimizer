@@ -13,6 +13,10 @@ import * as ui from './ui.js';
 document.addEventListener('DOMContentLoaded', () => {
 
     // --- Element References ---
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const leagueSelector = document.getElementById('leagueSelector');
+    const leagueIdInput = document.getElementById('leagueIdInput');
     const myTeamSelector = document.getElementById('myTeamSelector');
     const opponentSelector = document.getElementById('opponentSelector');
     const weekSelector = document.getElementById('weekSelector');
@@ -37,41 +41,82 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentRosterData = {};
     let allFreeAgents = [];
 
+    // --- Helper Functions ---
+    function getSelectedLeagueId() {
+        return leagueIdInput.value.trim() || leagueSelector.value;
+    }
+
     // --- Event Handlers ---
 
     async function handleInitialLoad() {
-        ui.populateWeekSelector(weekSelector);
-        ui.createTransactionRows(transactionSimulatorContainer);
-        dateSelector.value = new Date().toISOString().split('T')[0];
+        const authStatus = await api.checkAuthStatus();
+        if (authStatus.logged_in) {
+            ui.showMainView();
+            ui.populateWeekSelector(weekSelector);
+            ui.createTransactionRows(transactionSimulatorContainer);
+            dateSelector.value = new Date().toISOString().split('T')[0];
+
+            try {
+                const leagues = await api.fetchLeagues();
+                if (leagues.error) throw new Error(leagues.error);
+                ui.populateLeagueSelector(leagueSelector, leagues);
+                if (getSelectedLeagueId()) {
+                    await handleLeagueChange();
+                }
+            } catch (error) {
+                console.error("Failed to load leagues:", error);
+                alert(`Could not load your Yahoo leagues: ${error.message}. You can still enter a League ID manually.`);
+            }
+        } else {
+            ui.showLoginView();
+        }
+    }
+
+    async function handleLeagueChange() {
+        const leagueId = getSelectedLeagueId();
+        const week = weekSelector.value;
+        if (!leagueId) return;
+
+        ui.showLoading(myTeamSelector, 'Loading...');
+        ui.showLoading(opponentSelector, 'Loading...');
+        ui.clearAllSections(allContainers);
 
         try {
-            currentRosterData = await api.fetchRosters(weekSelector.value);
+            currentRosterData = await api.fetchRosters(leagueId, week);
+            if (Object.keys(currentRosterData).length === 0 || currentRosterData.error) {
+                 throw new Error(currentRosterData.error || "No teams found in this league.");
+            }
             ui.populateTeamSelectors(myTeamSelector, opponentSelector, currentRosterData);
         } catch (error) {
-            console.error("Failed to populate team selectors on initial load:", error);
-            alert("Could not load initial team data. Please ensure the backend server is running.");
+            console.error("Failed to populate team selectors:", error);
+            alert(`Could not load team data for league ${leagueId}. Please check the ID and try again. Error: ${error.message}`);
+            ui.populateTeamSelectors(myTeamSelector, opponentSelector, {}); // Clear selectors
         }
     }
 
     async function handleRunAnalysis() {
+        const leagueId = getSelectedLeagueId();
+        if (!leagueId) { alert("Please select or enter a league ID first."); return; }
         ui.clearAllSections(allContainers);
         await Promise.all([
             handleFetchMatchup(),
             handleFetchUtilization(),
-            handleFetchFreeAgents(0) // Start from the beginning
+            handleFetchFreeAgents(0)
         ]);
         populateTransactionSimulator();
     }
 
     async function handleFetchMatchup() {
+        const leagueId = getSelectedLeagueId();
         const myTeam = myTeamSelector.value;
         const opponent = opponentSelector.value;
         const week = weekSelector.value;
+        if (!leagueId || !myTeam || !opponent) { alert("Please select a league and both teams."); return; }
         if (myTeam === opponent) { alert("Please select two different teams."); return; }
 
         ui.showLoading(matchupContainer, `Loading matchup...`);
         try {
-            const data = await api.fetchMatchup(week, myTeam, opponent);
+            const data = await api.fetchMatchup(leagueId, week, myTeam, opponent);
             matchupContainer.innerHTML = '';
             matchupContainer.appendChild(ui.createSummaryTable(myTeam, data[myTeam].full_week_proj, data[myTeam].live_proj, opponent, data[opponent].full_week_proj, data[opponent].live_proj));
             if (data.off_days) {
@@ -83,9 +128,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleFetchSimulatedData() {
+        const leagueId = getSelectedLeagueId();
         const myTeam = myTeamSelector.value;
         const opponent = opponentSelector.value;
         const week = weekSelector.value;
+        if (!leagueId || !myTeam || !opponent) { alert("Please select a league and both teams."); return; }
         const transactions = [];
 
         for (let i = 0; i < 4; i++) {
@@ -106,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ui.showLoading(utilizationContainer, '');
 
         try {
-            const data = await api.fetchSimulatedData(week, myTeam, opponent, transactions);
+            const data = await api.fetchSimulatedData(leagueId, week, myTeam, opponent, transactions);
 
             matchupContainer.innerHTML = '';
             matchupContainer.appendChild(ui.createSummaryTable(myTeam, null, data.simulated_matchup[myTeam].totals, opponent, null, data.simulated_matchup[opponent].totals, "Simulated Matchup Results"));
@@ -120,11 +167,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleFetchUtilization() {
+        const leagueId = getSelectedLeagueId();
         const myTeam = myTeamSelector.value;
         const week = weekSelector.value;
+        if (!leagueId || !myTeam) { alert("Please select a league and your team."); return; }
         ui.showLoading(utilizationContainer, `Analyzing utilization...`);
         try {
-            const data = await api.fetchWeeklyUtilization(myTeam, week);
+            const data = await api.fetchWeeklyUtilization(leagueId, myTeam, week);
             utilizationContainer.innerHTML = '';
             utilizationContainer.appendChild(ui.createUtilizationTable(data.roster_utilization, `Roster Utilization`));
             if (data.open_slots) {
@@ -136,15 +185,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleFetchOptimalRoster() {
+        const leagueId = getSelectedLeagueId();
         const myTeam = myTeamSelector.value;
         const opponent = opponentSelector.value;
         const week = weekSelector.value;
         const date = dateSelector.value;
+        if (!leagueId || !myTeam || !opponent) { alert("Please select a league and both teams."); return; }
         if (myTeam === opponent) { alert("Your team and opponent must be different."); return; }
 
         ui.showLoading(optimizerContainer, `Finding optimal lineup for ${date}...`);
         try {
-            const data = await api.fetchOptimalRoster(myTeam, opponent, week, date);
+            const data = await api.fetchOptimalRoster(leagueId, myTeam, opponent, week, date);
             optimizerContainer.innerHTML = '';
 
             const title = document.createElement('h3');
@@ -173,14 +224,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function handleFetchFreeAgents(startIndex) {
         freeAgentStartIndex = startIndex;
+        const leagueId = getSelectedLeagueId();
         const myTeam = myTeamSelector.value;
         const opponent = opponentSelector.value;
         const week = weekSelector.value;
-        if (myTeam === opponent) { return; }
+        if (!leagueId || !myTeam || !opponent) { return; }
 
         ui.showLoading(freeAgentContainer, 'Searching for top free agents...');
         try {
-            const data = await api.fetchFreeAgents(myTeam, opponent, week, startIndex);
+            const data = await api.fetchFreeAgents(leagueId, myTeam, opponent, week, startIndex);
             allFreeAgents = data.free_agents;
 
             freeAgentContainer.innerHTML = '';
@@ -195,13 +247,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleFetchGoalieScenarios() {
+        const leagueId = getSelectedLeagueId();
         const myTeam = myTeamSelector.value;
         const week = weekSelector.value;
         const starts = goalieStartsSelector.value;
+        if (!leagueId || !myTeam) { alert("Please select a league and your team."); return; }
 
         ui.showLoading(goalieContainer, `Calculating scenarios for ${starts} future start(s)...`);
         try {
-            const data = await api.fetchGoalieScenarios(myTeam, week, starts);
+            const data = await api.fetchGoalieScenarios(leagueId, myTeam, week, starts);
             goalieContainer.innerHTML = '';
             goalieContainer.appendChild(ui.createGoalieScenariosTable(data));
         } catch (error) {
@@ -210,11 +264,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleFetchAllRosters() {
+        const leagueId = getSelectedLeagueId();
         const selectedWeek = weekSelector.value;
+        if (!leagueId) { alert("Please select or enter a league ID first."); return; }
+
         ui.showLoading(rostersContainer, `Loading raw roster data for week ${selectedWeek}...`);
         ui.clearAllSections([matchupContainer, optimizerContainer, utilizationContainer, freeAgentContainer, goalieContainer]);
         try {
-            const allRosters = await api.fetchRosters(selectedWeek);
+            const allRosters = await api.fetchRosters(leagueId, selectedWeek);
+            currentRosterData = allRosters; // Update state
+            ui.populateTeamSelectors(myTeamSelector, opponentSelector, currentRosterData);
+
             rostersContainer.innerHTML = '';
             for (const teamName in allRosters) {
                 const teamTitle = document.createElement('h2');
@@ -275,6 +335,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Initial Setup & Event Listeners ---
+    loginBtn.addEventListener('click', () => {
+        window.location.href = '/api/auth/login';
+    });
+
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            await api.logout();
+            window.location.reload();
+        } catch (error) {
+            console.error("Logout failed:", error);
+            window.location.reload(); // Still reload even if logout fails
+        }
+    });
+
+    leagueSelector.addEventListener('change', handleLeagueChange);
+    leagueIdInput.addEventListener('change', handleLeagueChange);
+    weekSelector.addEventListener('change', handleLeagueChange);
+
     runAnalysisBtn.addEventListener('click', handleRunAnalysis);
     optimizeBtn.addEventListener('click', handleFetchOptimalRoster);
     loadRawDataBtn.addEventListener('click', handleFetchAllRosters);

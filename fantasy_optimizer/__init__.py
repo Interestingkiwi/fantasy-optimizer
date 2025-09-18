@@ -5,7 +5,7 @@ for initializing the Flask app, configuring it, and registering blueprints.
 """
 from flask import Flask
 from flask_cors import CORS
-from .auth import auth
+from . import config
 
 def create_app():
     """
@@ -16,11 +16,13 @@ def create_app():
     because the app is structured as a package.
     """
     app = Flask(__name__, static_folder='../static')
+    app.config['SECRET_KEY'] = config.SECRET_KEY
     CORS(app)
 
-    # Import and register the blueprint from the routes module.
-    # Blueprints allow us to organize routes into separate files.
+    # Import and register blueprints.
     from . import routes
+    from . import auth
     app.register_blueprint(routes.api_bp)
+    app.register_blueprint(auth.auth_bp)
 
     return app

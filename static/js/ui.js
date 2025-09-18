@@ -10,6 +10,19 @@ const STATS_TO_DISPLAY_H2H = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 
 const FANTASY_WEEKS = 25;
 const MAX_TRANSACTIONS = 4;
 
+// --- UI State Functions ---
+export function showLoginView() {
+    document.getElementById('login-container').classList.remove('hidden');
+    document.getElementById('main-content').classList.add('hidden');
+    document.getElementById('logoutBtn').classList.add('hidden');
+}
+
+export function showMainView() {
+    document.getElementById('login-container').classList.add('hidden');
+    document.getElementById('main-content').classList.remove('hidden');
+    document.getElementById('logoutBtn').classList.remove('hidden');
+}
+
 // --- UI Creation Functions ---
 export function createSummaryTable(team1, totals1Full, totals1Live, team2, totals2Full, totals2Live, titleText = "Current Projected Matchup") {
     const container = document.createElement('div');
@@ -176,7 +189,7 @@ export function createGoalieScenariosTable(data) {
         tbody.innerHTML += `
             <tr>
                 <td>${s.name}</td>
-                <td>${s.gaa.toFixed(3)}</td>
+                <td>${s.gaa}</td>
                 <td>${s.svpct.toFixed(3)}</td>
             </tr>
         `;
@@ -320,6 +333,15 @@ export function createTransactionRows(container) {
 
 // --- UI Population Functions ---
 
+export function populateLeagueSelector(selector, leagues) {
+    selector.innerHTML = '<option value="">-- Select a League --</option>';
+    if (leagues && leagues.length > 0) {
+        leagues.forEach(league => {
+            selector.add(new Option(`${league.name} (${league.league_id})`, league.league_id));
+        });
+    }
+}
+
 export function populateWeekSelector(selector) {
     for (let i = 1; i <= FANTASY_WEEKS; i++) {
         selector.add(new Option(`Week ${i}`, i));
@@ -335,14 +357,18 @@ export function populateTeamSelectors(myTeamSel, opponentSel, rosters) {
         sel.value = currentVal;
     });
     if (myTeamSel.value === opponentSel.value && teamNames.length > 1) {
-        opponentSel.value = teamNames[1];
+        opponentSel.value = teamNames.find(name => name !== myTeamSel.value);
     }
 }
 
 // --- UI Utility Functions ---
 
 export function showLoading(container, message) {
-    container.innerHTML = `<p>${message}</p>`;
+    if (container.tagName === 'SELECT') {
+        container.innerHTML = `<option>${message}</option>`;
+    } else {
+        container.innerHTML = `<p>${message}</p>`;
+    }
 }
 
 export function showError(container, message) {

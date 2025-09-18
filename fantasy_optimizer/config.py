@@ -5,8 +5,14 @@ This file centralizes all the configuration variables.
 import os
 
 # --- Core App Config ---
+# IMPORTANT: You must set a secret key for session management.
+# You can generate a good one using: python -c 'import os; print(os.urandom(24))'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'your_default_secret_key_change_me')
+
+
 # This block writes the environment variable to a file if it exists.
 # This is crucial for deployment environments like Render.
+# This file should ONLY contain your consumer_key and consumer_secret.
 YAHOO_CREDENTIALS_FILE = 'private.json'
 private_content = os.environ.get('YAHOO_PRIVATE_JSON')
 if private_content:
@@ -19,13 +25,3 @@ else:
 
 # --- Database Config ---
 DB_FILE = "projections.db"
-
-# --- Yahoo API Config ---
-YAHOO_LEAGUE_KEY = '453.l.2200'
-
-# --- Security/Auth Config ---
-# Set your desired username and password here for the live app
-USERS = {
-    "your_username": "your_passwowrd",
-    "4": ""
-}

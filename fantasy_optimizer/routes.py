@@ -6,48 +6,83 @@ application initialization logic.
 import sqlite3
 import json
 from datetime import date, timedelta, datetime
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, jsonify, request, send_from_directory, session
+from functools import wraps
 
 from . import config
-from .auth import auth
-from .data_helpers import get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team
+from .auth import get_oauth_client
+from .data_helpers import get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, get_user_leagues
 from .optimization_logic import find_optimal_lineup
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
 api_bp = Blueprint('api', __name__)
 
+# --- Decorator for Yahoo Auth ---
+def yahoo_auth_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'yahoo_token' not in session or 'yahoo_token_secret' not in session:
+            return jsonify({"error": "Not authenticated with Yahoo. Please log in."}), 401
+
+        oauth = get_oauth_client(session['yahoo_token'], session['yahoo_token_secret'])
+        if not oauth.token_is_valid():
+            try:
+                oauth.refresh_access_token()
+                session['yahoo_token'] = oauth.token
+                session['yahoo_token_secret'] = oauth.token_secret
+            except Exception as e:
+                print(f"Error refreshing token: {e}")
+                session.clear() # Clear session if refresh fails
+                return jsonify({"error": "Failed to refresh Yahoo token. Please log in again."}), 401
+
+        # Pass the oauth object to the route function
+        kwargs['oauth'] = oauth
+        return f(*args, **kwargs)
+    return decorated_function
+
 # --- Route to serve the main HTML file ---
 @api_bp.route('/')
-@auth.login_required
 def index():
     """
     Serves the main index.html file from the project's root directory.
-    We go 'up' one level from the current blueprint's directory.
     """
     return send_from_directory('..', 'index.html')
 
 # --- API Routes ---
 
+@api_bp.route("/api/leagues")
+@yahoo_auth_required
+def api_get_leagues(oauth):
+    """API endpoint to get the user's Yahoo fantasy leagues."""
+    leagues = get_user_leagues(oauth)
+    if "error" in leagues:
+        return jsonify(leagues), 500
+    return jsonify(leagues)
+
 @api_bp.route("/api/rosters/week/<int:week_num>")
-@auth.login_required
-def api_get_rosters_for_week(week_num):
+@yahoo_auth_required
+def api_get_rosters_for_week(oauth, week_num):
     """API endpoint to get raw roster data for a specific week."""
-    print(f"API endpoint hit for week {week_num}. Fetching data...")
-    rosters = get_weekly_roster_data(week_num)
+    league_id = request.args.get('league_id')
+    if not league_id:
+        return jsonify({"error": "league_id parameter is required"}), 400
+    print(f"API endpoint hit for league {league_id}, week {week_num}. Fetching data...")
+    rosters = get_weekly_roster_data(oauth, league_id, week_num)
     return jsonify(rosters)
 
 @api_bp.route("/api/matchup")
-@auth.login_required
-def api_get_matchup():
+@yahoo_auth_required
+def api_get_matchup(oauth):
+    league_id = request.args.get('league_id', type=str)
     week_num = request.args.get('week', type=int)
     team1_name = request.args.get('team1', type=str)
     team2_name = request.args.get('team2', type=str)
 
-    if not all([week_num, team1_name, team2_name]):
+    if not all([league_id, week_num, team1_name, team2_name]):
         return jsonify({"error": "Missing required parameters"}), 400
 
     try:
-        all_rosters = get_weekly_roster_data(week_num)
+        all_rosters = get_weekly_roster_data(oauth, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
 
         team1_roster = all_rosters.get(team1_name)
@@ -71,8 +106,8 @@ def api_get_matchup():
         team1_full_proj, _, _ = calculate_optimized_totals(team1_roster, week_num, schedules, full_week_dates)
         team2_full_proj, _, _ = calculate_optimized_totals(team2_roster, week_num, schedules, full_week_dates)
 
-        team1_live_stats = get_live_stats_for_team(team1_name, week_num)
-        team2_live_stats = get_live_stats_for_team(team2_name, week_num)
+        team1_live_stats = get_live_stats_for_team(oauth, league_id, team1_name, week_num)
+        team2_live_stats = get_live_stats_for_team(oauth, league_id, team2_name, week_num)
 
         today = date.today()
         remainder_start = max(today, full_week_dates['start'])
@@ -107,19 +142,20 @@ def api_get_matchup():
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
 @api_bp.route("/api/simulate-week", methods=['POST'])
-@auth.login_required
-def api_simulate_week():
+@yahoo_auth_required
+def api_simulate_week(oauth):
     data = request.json
+    league_id = data.get('league_id')
     week_num = data.get('week')
     my_team_name = data.get('my_team')
     opponent_name = data.get('opponent')
     transactions = data.get('transactions', [])
 
-    if not all([week_num, my_team_name, opponent_name]):
+    if not all([league_id, week_num, my_team_name, opponent_name]):
         return jsonify({"error": "Missing required parameters"}), 400
 
     try:
-        all_rosters = get_weekly_roster_data(week_num)
+        all_rosters = get_weekly_roster_data(oauth, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
 
         my_roster = all_rosters.get(my_team_name)
@@ -169,20 +205,21 @@ def api_simulate_week():
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
 @api_bp.route("/api/optimizer")
-@auth.login_required
-def api_optimizer():
+@yahoo_auth_required
+def api_optimizer(oauth):
+    league_id = request.args.get('league_id', type=str)
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
     week_num = request.args.get('week', type=int)
     target_date_str = request.args.get('date', type=str)
 
-    if not all([my_team_name, opponent_name, week_num, target_date_str]):
+    if not all([league_id, my_team_name, opponent_name, week_num, target_date_str]):
         return jsonify({"error": "Missing required parameters"}), 400
 
     try:
         LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
 
-        all_rosters = get_weekly_roster_data(week_num)
+        all_rosters = get_weekly_roster_data(oauth, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
 
         my_roster = all_rosters.get(my_team_name)
@@ -237,16 +274,17 @@ def api_optimizer():
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
 @api_bp.route("/api/weekly-optimizer")
-@auth.login_required
-def api_weekly_optimizer():
+@yahoo_auth_required
+def api_weekly_optimizer(oauth):
+    league_id = request.args.get('league_id', type=str)
     team_name = request.args.get('team', type=str)
     week_num = request.args.get('week', type=int)
 
-    if not all([team_name, week_num]):
-        return jsonify({"error": "Missing parameters: team and week"}), 400
+    if not all([league_id, team_name, week_num]):
+        return jsonify({"error": "Missing parameters: league_id, team and week"}), 400
 
     try:
-        all_rosters = get_weekly_roster_data(week_num)
+        all_rosters = get_weekly_roster_data(oauth, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
         team_roster = all_rosters.get(team_name)
         if not team_roster: return jsonify({"error": f"Team '{team_name}' not found"}), 404
@@ -305,18 +343,19 @@ def api_weekly_optimizer():
 
 
 @api_bp.route("/api/free-agents")
-@auth.login_required
-def api_free_agents():
+@yahoo_auth_required
+def api_free_agents(oauth):
+    league_id = request.args.get('league_id', type=str)
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
     week_num = request.args.get('week', type=int)
     start_index = request.args.get('start', type=int, default=0)
 
-    if not all([my_team_name, opponent_name, week_num]):
+    if not all([league_id, my_team_name, opponent_name, week_num]):
         return jsonify({"error": "Missing required parameters"}), 400
 
     try:
-        all_rosters = get_weekly_roster_data(week_num)
+        all_rosters = get_weekly_roster_data(oauth, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
         my_roster = all_rosters.get(my_team_name)
         opponent_roster = all_rosters.get(opponent_name)
@@ -425,17 +464,18 @@ def api_free_agents():
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
 @api_bp.route("/api/goalie-scenarios")
-@auth.login_required
-def api_goalie_scenarios():
+@yahoo_auth_required
+def api_goalie_scenarios(oauth):
+    league_id = request.args.get('league_id', type=str)
     team_name = request.args.get('team', type=str)
     week_num = request.args.get('week', type=int)
     starts = request.args.get('starts', type=int, default=1)
 
-    if not all([team_name, week_num]):
-        return jsonify({"error": "Missing team and week parameters"}), 400
+    if not all([league_id, team_name, week_num]):
+        return jsonify({"error": "Missing required parameters"}), 400
 
     try:
-        live_stats = get_live_stats_for_team(team_name, week_num)
+        live_stats = get_live_stats_for_team(oauth, league_id, team_name, week_num)
 
         # Extract current totals to simulate against.
         current_ga = float(live_stats.get('ga', 0))

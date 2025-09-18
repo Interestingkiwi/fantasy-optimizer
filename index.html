@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fantasy Roster Viewer</title>
+    <title>Fantasy Hockey Optimizer</title>
     <style>
         body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; padding: 2em; max-width: 1200px; margin: auto; }
         .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1em; margin-bottom: 1em; padding: 1em; background-color: #f0f4f8; border-radius: 8px; border: 1px solid #d1d9e6; }
         label { font-weight: bold; }
-        select, button, input[type="date"] { padding: 8px; font-size: 1em; border-radius: 5px; border: 1px solid #ccc; }
+        select, button, input[type="date"], input[type="text"] { padding: 8px; font-size: 1em; border-radius: 5px; border: 1px solid #ccc; }
         hr { margin: 2em 0; border-top: 1px solid #e0e0e0; border-bottom: none;}
         .weekly-analysis-container, .optimizer-container { display: grid; grid-template-columns: 1fr 1fr; gap: 2em; }
         .team-section { border: 1px solid #e0e0e0; padding: 1em; border-radius: 8px; background-color: #fff; }
@@ -24,71 +24,89 @@
         .close-btn { float: right; background-color: #fdd; border: 1px solid #fbb; cursor: pointer; }
         .transaction-row { display: flex; gap: 1em; align-items: center; margin-bottom: 0.5em; }
         .transaction-row select { width: 200px; }
+        .hidden { display: none; }
+        .login-container { text-align: center; padding: 3em; border: 2px dashed #ccc; border-radius: 8px; }
     </style>
 </head>
 <body>
 
-    <h1>Fantasy Hockey Matchup Optimizer</h1>
-
-    <div class="controls">
-        <label for="myTeamSelector">My Team:</label> <select id="myTeamSelector"></select>
-        <label for="opponentSelector">Opponent:</label> <select id="opponentSelector"></select>
-        <label for="weekSelector">Fantasy Week:</label> <select id="weekSelector"></select>
-        <button id="runAnalysisBtn">Run Weekly Analysis</button>
+    <div id="header-container" style="display: flex; justify-content: space-between; align-items: center;">
+        <h1>Fantasy Hockey Matchup Optimizer</h1>
+        <button id="logoutBtn" class="hidden">Logout</button>
     </div>
 
-    <hr>
-
-    <h2>Weekly Analysis</h2>
-    <div class="weekly-analysis-container">
-        <div id="matchupContainer"></div>
-        <div id="utilizationContainer"></div>
+    <div id="login-container" class="login-container">
+        <h2>Welcome!</h2>
+        <p>Please log in with your Yahoo account to get started.</p>
+        <button id="loginBtn">Login with Yahoo</button>
     </div>
-    <div id="freeAgentContainer" style="margin-top: 2em;"></div>
 
-    <hr>
-
-    <h2>Transaction Simulator</h2>
-    <div class="team-section">
-        <div id="transactionSimulatorContainer">
-            <!-- Transaction rows will be generated here by JS -->
+    <div id="main-content" class="hidden">
+        <div class="controls">
+            <label for="leagueSelector">Yahoo League:</label>
+            <select id="leagueSelector"></select>
+            <label for="leagueIdInput">or ID:</label>
+            <input type="text" id="leagueIdInput" placeholder="e.g., 453.l.2200" size="12">
+            <span style="border-left: 1px solid #ccc; margin: 0 0.5em; height: 2em;"></span>
+            <label for="myTeamSelector">My Team:</label> <select id="myTeamSelector"></select>
+            <label for="opponentSelector">Opponent:</label> <select id="opponentSelector"></select>
+            <label for="weekSelector">Fantasy Week:</label> <select id="weekSelector"></select>
+            <button id="runAnalysisBtn">Run Weekly Analysis</button>
         </div>
-        <div class="controls" style="margin-top: 1em; border-top: 1px solid #eee; padding-top: 1em;">
-            <button id="simulateBtn">Simulate Week with Moves</button>
+
+        <hr>
+
+        <h2>Weekly Analysis</h2>
+        <div class="weekly-analysis-container">
+            <div id="matchupContainer"></div>
+            <div id="utilizationContainer"></div>
         </div>
+        <div id="freeAgentContainer" style="margin-top: 2em;"></div>
+
+        <hr>
+
+        <h2>Transaction Simulator</h2>
+        <div class="team-section">
+            <div id="transactionSimulatorContainer">
+                <!-- Transaction rows will be generated here by JS -->
+            </div>
+            <div class="controls" style="margin-top: 1em; border-top: 1px solid #eee; padding-top: 1em;">
+                <button id="simulateBtn">Simulate Week with Moves</button>
+            </div>
+        </div>
+
+        <hr>
+
+        <h2>Goalie Scenarios</h2>
+        <div class="controls">
+            <label for="goalieStartsSelector">Future Goalie Starts:</label>
+            <select id="goalieStartsSelector">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+            </select>
+            <button id="goalieScenarioBtn">Calculate Goalie Outcomes</button>
+        </div>
+        <div id="goalieContainer"></div>
+
+        <hr>
+
+        <h2>Daily Roster Optimizer</h2>
+        <div class="controls">
+            <label for="dateSelector">Date:</label> <input type="date" id="dateSelector">
+            <button id="optimizeBtn">Find Optimal Lineup for Date</button>
+        </div>
+        <div id="optimizerContainer"></div>
+
+        <hr>
+
+        <h2>All Rosters (Raw Data)</h2>
+        <div class="controls">
+            <button id="loadRawDataBtn">Load Raw Roster Data</button>
+        </div>
+        <div id="rostersContainer"></div>
     </div>
-
-    <hr>
-
-    <h2>Goalie Scenarios</h2>
-    <div class="controls">
-        <label for="goalieStartsSelector">Future Goalie Starts:</label>
-        <select id="goalieStartsSelector">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-        </select>
-        <button id="goalieScenarioBtn">Calculate Goalie Outcomes</button>
-    </div>
-    <div id="goalieContainer"></div>
-
-    <hr>
-
-    <h2>Daily Roster Optimizer</h2>
-    <div class="controls">
-        <label for="dateSelector">Date:</label> <input type="date" id="dateSelector">
-        <button id="optimizeBtn">Find Optimal Lineup for Date</button>
-    </div>
-    <div id="optimizerContainer"></div>
-
-    <hr>
-
-    <h2>All Rosters (Raw Data)</h2>
-    <div class="controls">
-        <button id="loadRawDataBtn">Load Raw Roster Data</button>
-    </div>
-    <div id="rostersContainer"></div>
 
     <!-- The old script tag is removed and replaced with this module loader -->
     <script type="module" src="/static/js/main.js"></script>

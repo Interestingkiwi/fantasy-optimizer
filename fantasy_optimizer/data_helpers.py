@@ -12,9 +12,21 @@ from yahoo_oauth import OAuth2
 
 from . import config
 
-def get_weekly_roster_data(week_num):
-    # This function is unchanged from the original app.py
-    # ... (code for get_weekly_roster_data remains here) ...
+def get_user_leagues(oauth):
+    """Fetches all of the user's fantasy hockey leagues using the provided oauth object."""
+    try:
+        if not oauth.token_is_valid():
+            oauth.refresh_access_token()
+        game = yfa.Game(oauth, 'nhl')
+        leagues = [{'league_id': l.league_id, 'name': l.name} for l in game.leagues()]
+        return leagues
+    except Exception as e:
+        error_message = f"Failed to authenticate with Yahoo or fetch leagues. Your credentials may be invalid or expired. Please try logging out and logging back in. Original error: {e}"
+        print(f"Error in get_user_leagues: {error_message}")
+        return {"error": error_message}
+
+
+def get_weekly_roster_data(oauth, league_id, week_num):
     # --- 1. Connect to DB and get week start/end dates ---
     con = sqlite3.connect(config.DB_FILE)
     con.row_factory = sqlite3.Row
@@ -43,15 +55,12 @@ def get_weekly_roster_data(week_num):
         games_this_week[team_tricode] = game_count
 
     # --- 3. Fetch Yahoo Fantasy Rosters ---
-    if not os.path.exists(config.YAHOO_CREDENTIALS_FILE) and not os.environ.get('YAHOO_PRIVATE_JSON'):
-         return {"error": "Yahoo credentials not found"}
-
     try:
-        oauth = OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE)
-        if not oauth.token_is_valid(): oauth.refresh_access_token()
+        if not oauth.token_is_valid():
+            oauth.refresh_access_token()
 
         game = yfa.Game(oauth, 'nhl')
-        lg = game.to_league(config.YAHOO_LEAGUE_KEY)
+        lg = game.to_league(league_id)
         all_rosters = {}
         all_teams_data = lg.teams()
 
@@ -99,11 +108,12 @@ def get_weekly_roster_data(week_num):
 
     except Exception as e:
         con.close()
-        return {"error": f"An error occurred: {e}"}
+        error_message = f"Failed to authenticate with Yahoo or fetch rosters. Your credentials may be invalid or expired. Please try logging out and logging back in. Original error: {e}"
+        print(f"Error in get_weekly_roster_data: {error_message}")
+        return {"error": error_message}
+
 
 def calculate_optimized_totals(roster, week_num, schedules, week_dates, transactions=[]):
-    # This function is unchanged from the original app.py
-    # ... (code for calculate_optimized_totals remains here) ...
     from .optimization_logic import find_optimal_lineup # Local import to avoid circular dependency
 
     totals = {}
@@ -168,18 +178,17 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
     return totals, daily_lineups, simulated_roster
 
 
-def get_live_stats_for_team(team_name, week_num):
+def get_live_stats_for_team(oauth, league_id, team_name, week_num):
     """
     Fetches live stats for a specific team for a given fantasy week.
     This helps reuse the API call logic.
     """
     try:
-        oauth = OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE)
         if not oauth.token_is_valid():
             oauth.refresh_access_token()
 
         game = yfa.Game(oauth, 'nhl')
-        lg = game.to_league(config.YAHOO_LEAGUE_KEY)
+        lg = game.to_league(league_id)
 
         # Get the team key for the given team name
         all_teams = lg.teams()
@@ -193,19 +202,14 @@ def get_live_stats_for_team(team_name, week_num):
             print(f"Warning: Team key not found for team name '{team_name}'")
             return {}
 
-        # CORRECTED: Use lg.matchups() and find the specific matchup
-        matchups_data = lg.matchups(week=week_num)
+        # Use the team object to get the specific matchup
+        team_obj = lg.to_team(team_key)
+        matchup_data = team_obj.matchup(week=week_num)
 
-        for matchup in matchups_data.get('matchups', []):
-            teams = matchup.get('teams', [])
-            for team in teams:
-                if team['team_key'] == team_key:
-                    # Found the right team, return its stats
-                    return team.get('stats', {})
+        # The matchup data contains stats for both teams. We need to find our team's stats.
+        # The 'stats' key at the top level of matchup_data is what we want.
+        return matchup_data.get('stats', {})
 
-        # If no matchup was found for the team this week (e.g., future week)
-        print(f"No live matchup data found for {team_name} in week {week_num}.")
-        return {}
 
     except Exception as e:
         # Handle cases where matchups might not be available (e.g., API errors, off-season)
