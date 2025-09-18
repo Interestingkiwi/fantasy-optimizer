@@ -7,6 +7,7 @@ __pycache__/
 venv/
 env/
 Gemini/
+archive/
 
 # Credentials & Data (IMPORTANT)
 credentials.json
@@ -19,3 +20,4 @@ private.json
 # Other
 applocal.js
 appwebapp.js
+gitpush.bat

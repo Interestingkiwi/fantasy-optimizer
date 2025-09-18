@@ -3,30 +3,33 @@ This module contains helper functions for fetching and processing data
 from the database and the Yahoo Fantasy API. It keeps the route handlers
 in routes.py cleaner and focused on request/response logic.
 """
-import os
 import sqlite3
 import json
 from datetime import datetime, timedelta
 import yahoo_fantasy_api as yfa
-from yahoo_oauth import OAuth2
 
 from . import config
 
-def get_user_leagues(oauth):
-    """Fetches all of the user's fantasy hockey leagues using the provided oauth object."""
-    try:
-        if not oauth.token_is_valid():
-            oauth.refresh_access_token()
-        game = yfa.Game(oauth, 'nhl')
-        leagues = [{'league_id': l.league_id, 'name': l.name} for l in game.leagues()]
-        return leagues
-    except Exception as e:
-        error_message = f"Failed to authenticate with Yahoo or fetch leagues. Your credentials may be invalid or expired. Please try logging out and logging back in. Original error: {e}"
-        print(f"Error in get_user_leagues: {error_message}")
-        return {"error": error_message}
+def get_user_leagues(gm):
+    """Fetches all hockey leagues for the authenticated user."""
+    leagues_data = gm.league_ids(year=2024) # Assuming 2024 season
+    leagues = []
+    for league_id in leagues_data:
+        try:
+            lg = gm.to_league(league_id)
+            leagues.append({
+                'id': league_id,
+                'name': lg.settings().get('name')
+            })
+        except Exception as e:
+            print(f"Could not fetch info for league {league_id}: {e}")
+            continue
+    return leagues
 
-
-def get_weekly_roster_data(oauth, league_id, week_num):
+def get_weekly_roster_data(gm, league_id, week_num):
+    """
+    Fetches and combines roster, projection, and schedule data for a given league and week.
+    """
     # --- 1. Connect to DB and get week start/end dates ---
     con = sqlite3.connect(config.DB_FILE)
     con.row_factory = sqlite3.Row
@@ -47,20 +50,12 @@ def get_weekly_roster_data(oauth, league_id, week_num):
     for row in all_schedules:
         team_tricode = row['team_tricode']
         schedule_dates = json.loads(row['schedule_json'])
-        game_count = 0
-        for date_str in schedule_dates:
-            game_date = datetime.fromisoformat(date_str).date()
-            if week_start_date <= game_date <= week_end_date:
-                game_count += 1
+        game_count = sum(1 for d_str in schedule_dates if week_start_date <= datetime.fromisoformat(d_str).date() <= week_end_date)
         games_this_week[team_tricode] = game_count
 
     # --- 3. Fetch Yahoo Fantasy Rosters ---
     try:
-        if not oauth.token_is_valid():
-            oauth.refresh_access_token()
-
-        game = yfa.Game(oauth, 'nhl')
-        lg = game.to_league(league_id)
+        lg = gm.to_league(league_id)
         all_rosters = {}
         all_teams_data = lg.teams()
 
@@ -68,7 +63,7 @@ def get_weekly_roster_data(oauth, league_id, week_num):
         for team_key, team_info in all_teams_data.items():
             team_name = team_info['name']
             team = lg.to_team(team_key)
-            roster = team.roster()
+            roster = team.roster(day=week_end_date.isoformat()) # Roster for the end of the week
             roster_data = []
 
             for player in roster:
@@ -78,15 +73,12 @@ def get_weekly_roster_data(oauth, league_id, week_num):
                 player_projections = dict(projection_row) if projection_row else {}
                 player_team_tricode = player_projections.get('team', 'N/A').upper() if player_projections else 'N/A'
 
-                # Calculate weekly stats
                 weekly_projections = {}
                 num_games = games_this_week.get(player_team_tricode, 0)
                 for stat, value in player_projections.items():
                     if stat not in ['player_name', 'team'] and value is not None:
                         try:
-                            numeric_value = float(value)
-                            weekly_stat = round(numeric_value * num_games, 2)
-                            weekly_projections[stat] = weekly_stat
+                            weekly_projections[stat] = round(float(value) * num_games, 2)
                         except (ValueError, TypeError):
                             continue
 
@@ -108,13 +100,13 @@ def get_weekly_roster_data(oauth, league_id, week_num):
 
     except Exception as e:
         con.close()
-        error_message = f"Failed to authenticate with Yahoo or fetch rosters. Your credentials may be invalid or expired. Please try logging out and logging back in. Original error: {e}"
-        print(f"Error in get_weekly_roster_data: {error_message}")
-        return {"error": error_message}
-
+        # Return a more specific error if the league ID is invalid
+        if "invalid" in str(e).lower() and "league" in str(e).lower():
+             return {"error": f"Invalid League ID: {league_id}. Please check the ID and try again."}
+        return {"error": f"An error occurred fetching Yahoo data: {e}"}
 
 def calculate_optimized_totals(roster, week_num, schedules, week_dates, transactions=[]):
-    from .optimization_logic import find_optimal_lineup # Local import to avoid circular dependency
+    from .optimization_logic import find_optimal_lineup
 
     totals = {}
     daily_lineups = {}
@@ -178,40 +170,27 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
     return totals, daily_lineups, simulated_roster
 
 
-def get_live_stats_for_team(oauth, league_id, team_name, week_num):
+def get_live_stats_for_team(lg, team_name, week_num):
     """
     Fetches live stats for a specific team for a given fantasy week.
-    This helps reuse the API call logic.
     """
     try:
-        if not oauth.token_is_valid():
-            oauth.refresh_access_token()
-
-        game = yfa.Game(oauth, 'nhl')
-        lg = game.to_league(league_id)
-
-        # Get the team key for the given team name
         all_teams = lg.teams()
-        team_key = None
-        for tk, t_data in all_teams.items():
-            if t_data['name'] == team_name:
-                team_key = tk
-                break
+        team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name), None)
 
         if not team_key:
             print(f"Warning: Team key not found for team name '{team_name}'")
             return {}
 
-        # Use the team object to get the specific matchup
-        team_obj = lg.to_team(team_key)
-        matchup_data = team_obj.matchup(week=week_num)
+        matchup_data = lg.matchup(team_key, week=week_num)
 
-        # The matchup data contains stats for both teams. We need to find our team's stats.
-        # The 'stats' key at the top level of matchup_data is what we want.
-        return matchup_data.get('stats', {})
+        # The matchup data is directly the stats for that team in that week
+        if matchup_data:
+             return {stat: val for stat, val in matchup_data.items() if isinstance(val, (int, float, str))}
 
+        print(f"No live matchup data found for {team_name} in week {week_num}.")
+        return {}
 
     except Exception as e:
-        # Handle cases where matchups might not be available (e.g., API errors, off-season)
         print(f"Could not fetch live matchup data for {team_name} (week {week_num}): {e}")
-        return {} # Return empty dictionary on failure
+        return {}

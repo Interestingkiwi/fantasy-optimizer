@@ -13,6 +13,8 @@ archive/
 credentials.json
 private.json
 *.csv.bak
+private.json.bak
+privatetempold.json
 
 # OS-specific
 .DS_Store

@@ -3,23 +3,29 @@ This file marks the 'fantasy_optimizer' directory as a Python package.
 It contains the application factory function, create_app(), which is responsible
 for initializing the Flask app, configuring it, and registering blueprints.
 """
+import os
 from flask import Flask
 from flask_cors import CORS
-from . import config
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 def create_app():
     """
     Application factory function. Creates and configures the Flask app.
-
-    The static_folder='../static' tells Flask that the folder for static files
-    (like JS, CSS) is one level up from this file's directory. This is necessary
-    because the app is structured as a package.
     """
     app = Flask(__name__, static_folder='../static')
-    app.config['SECRET_KEY'] = config.SECRET_KEY
-    CORS(app)
 
-    # Import and register blueprints.
+    # IMPORTANT: Add ProxyFix middleware here.
+    # This tells the app to trust the headers from the proxy server (like Render, Heroku, etc.)
+    # regarding the protocol (http/https) and host. This is crucial for OAuth to work in production.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+    # Set a secret key for session management.
+    # It's important that this is a complex, random string in production.
+    app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev_secret_key_should_be_changed')
+
+    CORS(app, supports_credentials=True)
+
+    # Import and register blueprints
     from . import routes
     from . import auth
     app.register_blueprint(routes.api_bp)
