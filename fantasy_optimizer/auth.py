@@ -11,14 +11,13 @@ from . import config
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
 def get_oauth_client(token=None, token_secret=None):
-    """Creates an OAuth2 client instance."""
+    """Creates an OAuth2 client instance, used for making API calls after authentication."""
     redirect_uri = url_for('auth.callback', _external=True)
 
     if '127.0.0.1' not in redirect_uri and 'localhost' not in redirect_uri:
-        redirect_uri = redirect_uri.replace('http://', 'https://')
+        redirect_uri = redirect_uri.replace('http://', 'https')
 
-    # This function is now simplified, as the initial login doesn't create an oauth object first.
-    # It's used for the callback and subsequent API calls.
+    # This client is now primarily for making API calls once tokens are in the session.
     return OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE,
                   token={'access_token': token, 'token_secret': token_secret} if token else None,
                   redirect_uri=redirect_uri)
@@ -27,8 +26,7 @@ def get_oauth_client(token=None, token_secret=None):
 def login():
     """
     Initiates the Yahoo login process by manually constructing the authorization
-    URL and redirecting the user to Yahoo's auth page. This avoids the library's
-    interactive command-line prompt.
+    URL and redirecting the user to Yahoo's auth page.
     """
     if not os.path.exists(config.YAHOO_CREDENTIALS_FILE):
         return "Error: Yahoo credentials file (private.json) not found on server.", 500
@@ -67,15 +65,27 @@ def login():
 @auth_bp.route('/callback')
 def callback():
     """
-    Handles the callback from Yahoo after user authorization.
+    Handles the callback from Yahoo after user authorization. This function
+    is specifically designed to fetch the initial token using the authorization code.
     """
-    oauth = get_oauth_client()
     try:
+        redirect_uri = url_for('auth.callback', _external=True)
+        if '127.0.0.1' not in redirect_uri and 'localhost' not in redirect_uri:
+            redirect_uri = redirect_uri.replace('http://', 'https')
+
+        # Create a fresh OAuth2 instance specifically for handling the callback.
+        # This prevents the library from incorrectly trying to refresh a non-existent token.
+        oauth = OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE, redirect_uri=redirect_uri)
+
+        # Use the authorization code from Yahoo's redirect to get the access token.
         oauth.get_token(request.args.get('code'))
+
+        # Store the newly acquired tokens in the user's session.
         session['yahoo_token'] = oauth.access_token
         session['yahoo_token_secret'] = oauth.token_secret
         session.permanent = True
         print("Successfully stored tokens in session.")
+
     except Exception as e:
         print(f"Error getting token from callback: {e}")
         return "Authentication failed. Please try again.", 400
