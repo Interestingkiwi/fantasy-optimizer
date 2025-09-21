@@ -12,12 +12,12 @@ from . import config
 
 def get_user_leagues(gm):
     """Fetches all hockey leagues for the authenticated user."""
-    leagues_data = gm.league_ids(year=2024) # Assuming 2024 season
+    # FIX: Updated the year from 2024 to 2025 to fetch leagues for the current 2025-26 season.
+    leagues_data = gm.league_ids(year=2025)
     leagues = []
     for league_id in leagues_data:
         try:
             lg = gm.to_league(league_id)
-            # FIX: Changed 'id' to 'league_id' to match frontend expectations.
             leagues.append({
                 'league_id': league_id,
                 'name': lg.settings().get('name')
@@ -64,7 +64,10 @@ def get_weekly_roster_data(gm, league_id, week_num):
         for team_key, team_info in all_teams_data.items():
             team_name = team_info['name']
             team = lg.to_team(team_key)
-            roster = team.roster(day=week_end_date.isoformat()) # Roster for the end of the week
+            # FIX: Pass the datetime.date object directly to the roster method.
+            # The yahoo_fantasy_api library expects a date object, and passing an isoformat string
+            # was causing an AttributeError ('str' object has no attribute 'strftime') internally.
+            roster = team.roster(day=week_end_date) # Roster for the end of the week
             roster_data = []
 
             for player in roster:
