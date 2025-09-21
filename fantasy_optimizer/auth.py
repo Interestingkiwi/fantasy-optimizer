@@ -20,10 +20,17 @@ def get_oauth_client(token_data=None):
     if '127.0.0.1' not in redirect_uri and 'localhost' not in redirect_uri:
         redirect_uri = redirect_uri.replace('http://', 'https')
 
-    # Pass the full token dictionary, allowing the library to refresh correctly.
-    return OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE,
-                  token=token_data,
-                  redirect_uri=redirect_uri)
+    # FIX: Unpack the token_data dictionary into keyword arguments.
+    # The yahoo-oauth library expects keys like 'access_token', 'refresh_token', etc.,
+    # as direct keyword arguments, not nested inside a 'token' dictionary.
+    # This prevents the library from falling back to the interactive input() flow.
+    if token_data:
+        return OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE,
+                      redirect_uri=redirect_uri, **token_data)
+
+    # Fallback for cases where token_data might not be available, though should be handled by calling function
+    return OAuth2(None, None, from_file=config.YAHOO_CREDENTIALS_FILE, redirect_uri=redirect_uri)
+
 
 @auth_bp.route('/login')
 def login():
