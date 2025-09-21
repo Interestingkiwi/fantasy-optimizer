@@ -17,8 +17,9 @@ def get_user_leagues(gm):
     for league_id in leagues_data:
         try:
             lg = gm.to_league(league_id)
+            # FIX: Changed 'id' to 'league_id' to match frontend expectations.
             leagues.append({
-                'id': league_id,
+                'league_id': league_id,
                 'name': lg.settings().get('name')
             })
         except Exception as e:

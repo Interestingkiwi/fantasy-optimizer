@@ -76,10 +76,9 @@ def api_get_user_leagues():
         print(f"Error fetching leagues: {e}")
         return jsonify({"error": str(e)}), 500
 
-@api_bp.route("/api/rosters")
-def api_get_rosters_for_week():
+@api_bp.route("/api/rosters/week/<int:week_num>")
+def api_get_rosters_for_week(week_num):
     """API endpoint to get raw roster data for a specific week and league."""
-    week_num = request.args.get('week', type=int)
     league_id = request.args.get('league_id', type=str)
 
     if not week_num or not league_id:
