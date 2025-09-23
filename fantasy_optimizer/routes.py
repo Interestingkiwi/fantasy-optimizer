@@ -14,8 +14,8 @@ from .auth import get_oauth_client
 from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team
 from .optimization_logic import find_optimal_lineup
 from flask import render_template, session, redirect, url_for
-from fantasy_optimizer import app
 from fantasy_optimizer.auth import login_required, oauth
+from .auth import api_bp # Import the blueprint
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
 api_bp = Blueprint('api', __name__)
@@ -55,11 +55,12 @@ def check_auth_and_get_game():
     return gm, None
 
 # --- Route to serve the main HTML file ---
-@app.route('/')
+@api_bp.route('/')
 def index():
-    if 'yahoo_token' in session:
-        return render_template('index.html')
-    return redirect(url_for('login'))
+    """
+    Serves the main index.html file from the project's root directory.
+    """
+    return send_from_directory('..', 'index.html')
 #@api_bp.route('/')
 #def index():
 #    """
