@@ -40,6 +40,20 @@ export async function checkAuthStatus() {
     return response.json();
 }
 
+export async function checkLoginStatus() {
+    try {
+        // Add { cache: 'no-cache' } to the fetch request
+        const response = await fetch(`${API_BASE_URL}/api/auth/status`, {
+            cache: 'no-cache'
+        });
+        const data = await response.json();
+        return data.logged_in;
+    } catch (error) {
+        console.error('Error checking login status:', error);
+        return false;
+    }
+}
+
 export async function logout() {
     await fetch(`${API_BASE_URL}/api/auth/logout`);
 }
