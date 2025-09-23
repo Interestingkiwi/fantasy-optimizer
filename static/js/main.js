@@ -9,6 +9,7 @@
 
 import * as api from './api.js';
 import * as ui from './ui.js';
+import { API_BASE_URL } from './api.js'; // <-- Import the base URL
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -348,7 +349,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Initial Setup & Event Listeners ---
     loginBtn.addEventListener('click', () => {
         const rememberMe = rememberMeCheckbox.checked;
-        window.location.href = `/api/auth/login?remember=${rememberMe}`;
+        window.location.href = `${API_BASE_URL}/api/auth/login?remember=${rememberMe}`;
     });
 
     logoutBtn.addEventListener('click', async () => {
