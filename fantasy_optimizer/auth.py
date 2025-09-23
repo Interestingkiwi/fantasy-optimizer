@@ -36,10 +36,12 @@ def load_token_from_cache():
     if os.path.exists(TOKEN_CACHE_FILE):
         try:
             with open(TOKEN_CACHE_FILE, 'r') as f:
-                return json.load()
+                # FIX: Pass the file object 'f' to json.load()
+                # This ensures we read the content of the opened file.
+                return json.load(f)
         except (IOError, json.JSONDecodeError) as e:
-            print(f"Error loading token cache: {e}")
-            # If the file is corrupt, remove it to prevent login loops
+            print(f"Error loading or parsing token cache: {e}")
+            # If the file is empty or corrupt, remove it to prevent login loops.
             delete_token_cache()
     return None
 
