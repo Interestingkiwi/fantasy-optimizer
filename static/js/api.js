@@ -7,7 +7,7 @@
 // --- Configuration ---
 const HOSTING_ENVIRONMENT = 'web'; // Or 'localhost' for testing
 // Make sure this points to your live server URL
-export const API_BASE_URL = HOSTING_ENVIRONMENT === 'localhost' ? 'http://127.0.0.1:5000' : 'https://www.fantasystreams.app';
+export const API_BASE_URL = HOSTING_ENVIRONMENT === 'localhost' ? 'http://127.0.0.1:5000' : 'https://fantasystreams.app';
 
 // --- Private Helper Function ---
 async function handleResponse(response) {
