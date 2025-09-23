@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Element References ---
     const loginBtn = document.getElementById('loginBtn');
     const logoutBtn = document.getElementById('logoutBtn');
+    const rememberMeCheckbox = document.getElementById('rememberMeCheckbox');
     const leagueSelector = document.getElementById('leagueSelector');
     const leagueIdInput = document.getElementById('leagueIdInput');
     const myTeamSelector = document.getElementById('myTeamSelector');
@@ -49,28 +50,38 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Event Handlers ---
 
     async function handleInitialLoad() {
-        const authStatus = await api.checkAuthStatus();
-        if (authStatus.logged_in) {
-            ui.showMainView();
-            ui.populateWeekSelector(weekSelector);
-            ui.createTransactionRows(transactionSimulatorContainer);
-            dateSelector.value = new Date().toISOString().split('T')[0];
-
-            try {
-                const leagues = await api.fetchLeagues();
-                if (leagues.error) throw new Error(leagues.error);
-                ui.populateLeagueSelector(leagueSelector, leagues);
-                if (getSelectedLeagueId()) {
-                    await handleLeagueChange();
-                }
-            } catch (error) {
-                console.error("Failed to load leagues:", error);
-                alert(`Could not load your Yahoo leagues: ${error.message}. You can still enter a League ID manually.`);
+        // Before checking auth status, try to auto-login which might be triggered
+        // by the backend if a token is cached.
+        if (window.location.pathname === '/') { // Only on the main page
+            const authStatus = await api.checkAuthStatus();
+            if (authStatus.logged_in) {
+                ui.showMainView();
+                initializeMainView();
+            } else {
+                 // Try to login automatically if there might be a cache
+                window.location.href = '/api/auth/login?remember=true';
             }
-        } else {
-            ui.showLoginView();
         }
     }
+
+    async function initializeMainView() {
+        ui.populateWeekSelector(weekSelector);
+        ui.createTransactionRows(transactionSimulatorContainer);
+        dateSelector.value = new Date().toISOString().split('T')[0];
+
+        try {
+            const leagues = await api.fetchLeagues();
+            if (leagues.error) throw new Error(leagues.error);
+            ui.populateLeagueSelector(leagueSelector, leagues);
+            if (getSelectedLeagueId()) {
+                await handleLeagueChange();
+            }
+        } catch (error) {
+            console.error("Failed to load leagues:", error);
+            alert(`Could not load your Yahoo leagues: ${error.message}. You can still enter a League ID manually.`);
+        }
+    }
+
 
     async function handleLeagueChange() {
         const leagueId = getSelectedLeagueId();
@@ -336,7 +347,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Initial Setup & Event Listeners ---
     loginBtn.addEventListener('click', () => {
-        window.location.href = '/api/auth/login';
+        const rememberMe = rememberMeCheckbox.checked;
+        window.location.href = `/api/auth/login?remember=${rememberMe}`;
     });
 
     logoutBtn.addEventListener('click', async () => {
@@ -349,6 +361,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // This handles the case where the user is already logged in (via session or cache)
+    api.checkAuthStatus().then(authStatus => {
+        if (authStatus.logged_in) {
+            ui.showMainView();
+            initializeMainView();
+        } else {
+            ui.showLoginView();
+        }
+    });
+
+
     leagueSelector.addEventListener('change', handleLeagueChange);
     leagueIdInput.addEventListener('change', handleLeagueChange);
     weekSelector.addEventListener('change', handleLeagueChange);
@@ -359,5 +382,4 @@ document.addEventListener('DOMContentLoaded', () => {
     simulateBtn.addEventListener('click', handleFetchSimulatedData);
     goalieScenarioBtn.addEventListener('click', handleFetchGoalieScenarios);
 
-    handleInitialLoad();
 });

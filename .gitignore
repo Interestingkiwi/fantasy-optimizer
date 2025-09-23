@@ -15,6 +15,7 @@ private.json
 *.csv.bak
 private.json.bak
 privatetempold.json
+token_cache.json
 
 # OS-specific
 .DS_Store
