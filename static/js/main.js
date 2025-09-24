@@ -348,14 +348,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Initial Setup & Event Listeners ---
 
-    // This function now just updates the href on the login anchor tag
-    function updateLoginLink() {
-        const rememberMe = rememberMeCheckbox.checked;
-        loginBtn.href = `${API_BASE_URL}/api/auth/login?remember=${rememberMe}`;
-    }
-
-    rememberMeCheckbox.addEventListener('change', updateLoginLink);
-    updateLoginLink(); // Set initial href
+    // The login link is now static in the HTML, but we can still update it if the checkbox changes.
+    // This part is a progressive enhancement and not critical for the login to work.
+    rememberMeCheckbox.addEventListener('change', () => {
+         loginBtn.href = `${API_BASE_URL}/api/auth/login?remember=${rememberMeCheckbox.checked}`;
+    });
 
     logoutBtn.addEventListener('click', async () => {
         try {
