@@ -26,6 +26,23 @@
         .transaction-row select { width: 200px; }
         .hidden { display: none; }
         .login-container { text-align: center; padding: 3em; border: 2px dashed #ccc; border-radius: 8px; }
+        /* Style for the login link to look like a button */
+        #loginBtn {
+            display: inline-block;
+            padding: 8px 16px;
+            font-size: 1em;
+            cursor: pointer;
+            text-align: center;
+            text-decoration: none;
+            color: #333;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            user-select: none;
+        }
+        #loginBtn:hover {
+            background-color: #e0e0e0;
+        }
     </style>
 </head>
 <body>
@@ -42,7 +59,8 @@
             <input type="checkbox" id="rememberMeCheckbox" checked>
             <label for="rememberMeCheckbox">Remember me</label>
         </div>
-        <button id="loginBtn" style="margin-top: 1em;">Login with Yahoo</button>
+        <!-- Changed button to an anchor tag for better WebView compatibility -->
+        <a id="loginBtn" href="#" style="margin-top: 1em;">Login with Yahoo</a>
     </div>
 
     <div id="main-content" class="hidden">
