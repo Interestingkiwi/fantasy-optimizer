@@ -6,7 +6,7 @@
  */
 
 // --- Constants ---
-const STATS_TO_DISPLAY_H2H = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga'];
+const STATS_TO_DISPLAY_H2H = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'gaa'];
 const FANTASY_WEEKS = 25;
 const MAX_TRANSACTIONS = 4;
 
@@ -43,7 +43,7 @@ export function createSummaryTable(team1, totals1Full, totals1Live, team2, total
             </tr>
         </thead>`;
     const tbody = document.createElement('tbody');
-    const inverseStats = ['ga'];
+    const inverseStats = ['gaa'];
 
     STATS_TO_DISPLAY_H2H.forEach(stat => {
         const t1_full = totals1Full ? (totals1Full[stat] !== undefined ? totals1Full[stat] : 0) : 'N/A';
