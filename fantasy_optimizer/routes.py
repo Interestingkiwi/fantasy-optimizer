@@ -13,7 +13,7 @@ from flask import Blueprint, jsonify, request, send_from_directory, session
 from yahoo_fantasy_api import game
 from . import config
 from .auth import get_oauth_client
-from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, normalize_name
+from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, normalize_name, get_healthy_free_agents
 from .optimization_logic import find_optimal_lineup
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
@@ -401,14 +401,13 @@ def api_free_agents():
         return error
 
     try:
+        lg = gm.to_league(league_id)
         all_rosters = get_weekly_roster_data(gm, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
         my_roster = all_rosters.get(my_team_name)
         opponent_roster = all_rosters.get(opponent_name)
         if not my_roster or not opponent_roster:
             return jsonify({"error": "Team names not found"}), 404
-
-        normalized_rostered_names = {normalize_name(p['name']) for r in all_rosters.values() for p in r}
 
         con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
@@ -448,20 +447,31 @@ def api_free_agents():
 
         ideal_drop = min(my_player_values, key=lambda x: x['value']) if my_player_values else None
 
-        cur.execute("SELECT * FROM projections")
-        all_db_players = cur.fetchall()
-
-        simulated_free_agents = [dict(p) for p in all_db_players if p['normalized_name'] not in normalized_rostered_names]
+        healthy_free_agents = get_healthy_free_agents(lg)
 
         evaluated_fas = []
-        for fa_proj in simulated_free_agents:
+        for fa in healthy_free_agents:
             try:
+                normalized_fa_name = normalize_name(fa['name'])
+                if normalized_fa_name in ['sebastianaho', 'eliaspettersson']:
+                    is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in fa['eligible_positions'])
+                    is_defense = 'D' in fa['eligible_positions']
+                    if is_forward and not is_defense:
+                        normalized_fa_name = f"{normalized_fa_name}f"
+                    elif is_defense and not is_forward:
+                        normalized_fa_name = f"{normalized_fa_name}d"
+
+                cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_fa_name,))
+                fa_proj_row = cur.fetchone()
+                if not fa_proj_row: continue
+                fa_proj = dict(fa_proj_row)
+
                 fa_team = fa_proj.get('team', 'N/A').upper()
                 fa_schedule = schedules.get(fa_team, [])
                 games_this_week = sum(1 for d_str in fa_schedule if week_dates['start'] <= date.fromisoformat(d_str) <= week_dates['end'])
                 if games_this_week == 0: continue
 
-                fa_data = { "name": fa_proj['player_name'], "positions": fa_proj.get('positions', ''), "team": fa_team, "per_game_projections": fa_proj, "weekly_impact_score": 0, "games_this_week": games_this_week, "start_days": [], "weekly_projections": {} }
+                fa_data = { "name": fa['name'], "positions": ', '.join(fa['eligible_positions']), "team": fa_team, "per_game_projections": fa_proj, "weekly_impact_score": 0, "games_this_week": games_this_week, "start_days": [], "weekly_projections": {} }
 
                 for stat, value in fa_proj.items():
                     if stat not in ['player_name', 'team', 'positions'] and value is not None:
@@ -492,7 +502,7 @@ def api_free_agents():
                     evaluated_fas.append(fa_data)
 
             except (KeyError, TypeError, ValueError) as e:
-                print(f"Skipping FA {fa_proj.get('player_name', 'Unknown')}. Error: {e}")
+                print(f"Skipping FA {fa.get('name', 'Unknown')}. Error: {e}")
                 continue
 
         con.close()

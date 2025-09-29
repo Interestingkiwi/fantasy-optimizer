@@ -242,3 +242,25 @@ def get_live_stats_for_team(lg, team_name, week_num):
     except Exception as e:
         print(f"Could not fetch live matchup data for {team_name} (week {week_num}): {e}")
         return {}
+
+def get_healthy_free_agents(lg):
+    """
+    Fetches all free agents from Yahoo for a given league and filters out
+    players with an injury status that makes them eligible for an IR slot.
+    """
+    print("Fetching free agents from Yahoo API...")
+    try:
+        yahoo_fas_skaters = lg.free_agents('P')
+        yahoo_fas_goalies = lg.free_agents('G')
+        all_yahoo_fas = yahoo_fas_skaters + yahoo_fas_goalies
+        print(f"Found {len(all_yahoo_fas)} total free agents in the league.")
+    except Exception as e:
+        print(f"Could not fetch free agents from Yahoo: {e}")
+        return []
+
+    # These are statuses that typically allow a player to be placed on IR/IR+
+    INJURY_STATUSES_TO_EXCLUDE = ['O', 'DTD', 'IR', 'IR-LT', 'NA', 'IL']
+
+    healthy_yahoo_fas = [p for p in all_yahoo_fas if p.get('status', '') not in INJURY_STATUSES_TO_EXCLUDE]
+    print(f"Found {len(healthy_yahoo_fas)} healthy free agents.")
+    return healthy_yahoo_fas
