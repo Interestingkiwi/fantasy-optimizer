@@ -41,15 +41,45 @@ def normalize_name(name):
 def sanitize_header(header_list):
     """Sanitizes a list of header strings for SQL compatibility."""
     sanitized = []
+
+    # Mapping from CSV header names to the abbreviations used in the app
+    stat_mapping = {
+        'goals': 'g',
+        'assists': 'a',
+        'points': 'pts',
+        'pp_points': 'ppp',
+        'hits': 'hit',
+        'sog': 'sog',
+        'blk': 'blk',
+        'w': 'w',
+        'so': 'so',
+        'sv%': 'svpct',
+        'ga': 'ga',
+        'plus_minus': 'plus_minus',
+        'shg': 'shg',
+        'sha': 'sha',
+        'shp': 'shp',
+        'pim': 'pim',
+        'fow': 'fow',
+        'fol': 'fol',
+        'ppg': 'ppg',
+        'ppa': 'ppa',
+        'gaa': 'gaa',
+        'gs': 'gs',
+        'sv': 'sv',
+        'sa': 'sa',
+        'qs': 'qs'
+    }
+
     for h in header_list:
         clean_h = h.strip().lower()
         if clean_h == '"+/-"':
-            sanitized.append('plus_minus')
-        # FIX: Add specific handling for sv% to prevent collision with sv
-        elif clean_h == 'sv%':
-            sanitized.append('sv_pct')
+            clean_h = 'plus_minus'
         else:
-            sanitized.append(re.sub(r'[^a-zA-Z0-9_]', '', clean_h.replace(' ', '_')))
+            clean_h = re.sub(r'[^a-z0-9_%]', '', clean_h.replace(' ', '_'))
+
+        sanitized.append(stat_mapping.get(clean_h, clean_h))
+
     return sanitized
 
 def calculate_per_game_stats(row, gp_index, stat_indices):
@@ -130,8 +160,6 @@ def setup_projections_table(cursor):
             except ValueError as e:
                 raise ValueError(f"Missing column in {SKATER_CSV_FILE}: {e}")
 
-            # FIX: Use an exclude list for more robust stat conversion.
-            # This prevents stats from being missed if not in the include list.
             skater_stats_to_exclude = [
                 'player name', 'age', 'positions', 'team', 'salary', 'gp org', 'gp',
                 'toi org es', 'toi org pp', 'toi org pk', 'toi es', 'toi pp', 'toi pk', 'total toi',
@@ -165,7 +193,6 @@ def setup_projections_table(cursor):
             except ValueError as e:
                 raise ValueError(f"Missing column in {GOALIE_CSV_FILE}: {e}")
 
-            # FIX: Use an exclude list for goalies. Rate stats (sv%, gaa) should not be converted.
             goalie_stats_to_exclude = [
                 'player name', 'team', 'age', 'position', 'salary', 'gs', 'sv%', 'gaa',
                 'rank', 'playerid', 'fantasy team'

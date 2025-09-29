@@ -190,7 +190,7 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
                 # FIX: Sum all per-game counting stats daily. Rate stats will be calculated once at the end.
                 for stat, value in player['per_game_projections'].items():
                     # Skip non-stat fields and rate stats that need special calculation
-                    if stat in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age', 'sv_pct', 'gaa'] or value is None:
+                    if stat in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age', 'svpct', 'gaa'] or value is None:
                         continue
                     try:
                         totals[stat] += float(value)
@@ -200,9 +200,9 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
 
     # Post-process goalie rate stats from the weekly totals
     if totals.get('sa', 0) > 0:
-        totals['sv_pct'] = totals['sv'] / totals['sa']
+        totals['svpct'] = totals['sv'] / totals['sa']
     else:
-        totals['sv_pct'] = 0
+        totals['svpct'] = 0
 
     # Use games started (gs) for a more accurate GAA calculation if available
     if totals.get('gs', 0) > 0:
@@ -212,7 +212,7 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
 
     # Final rounding on all stats
     final_totals = {
-        stat: round(value, 3 if stat in ['sv_pct', 'gaa'] else 2)
+        stat: round(value, 3 if stat in ['svpct', 'gaa'] else 2)
         for stat, value in totals.items()
     }
     return final_totals, daily_lineups, simulated_roster
