@@ -167,17 +167,17 @@ def api_get_matchup():
                 live_ga = float(live.get('ga', 0))
                 live_sv = float(live.get('sv', 0))
                 live_svpct = float(live.get('svpct', 0))
-                live_gaa = float(live.get('gaa', 0))
+                live_gaa = float(live.get('gaa', 0.0))
                 # Approximate live stats from what Yahoo provides
                 live_sa = live_sv / live_svpct if live_svpct > 0 else 0
                 live_gs = live_ga / live_gaa if live_gaa > 0 else 0
             except (ValueError, TypeError):
                 live_ga, live_sv, live_sa, live_gs = 0.0, 0.0, 0.0, 0.0
 
-            rem_ga = remainder.get('ga', 0)
-            rem_sv = remainder.get('sv', 0)
-            rem_sa = remainder.get('sa', 0)
-            rem_gs = remainder.get('gs', 0)
+            rem_ga = remainder.get('raw_ga', 0)
+            rem_sv = remainder.get('raw_sv', 0)
+            rem_sa = remainder.get('raw_sa', 0)
+            rem_gs = remainder.get('raw_gs', 0)
 
             total_ga = live_ga + rem_ga
             total_sv = live_sv + rem_sv
@@ -185,8 +185,9 @@ def api_get_matchup():
             total_gs = live_gs + rem_gs
 
             # Update combined dictionary with correctly calculated rate stats
-            combined['gaa'] = total_ga / total_gs if total_gs > 0 else 0
-            combined['svpct'] = total_sv / total_sa if total_sa > 0 else 0
+            # FIX: Round GAA and SV% to three decimal places for display.
+            combined['gaa'] = round(total_ga / total_gs, 3) if total_gs > 0 else 0.0
+            combined['svpct'] = round(total_sv / total_sa, 3) if total_sa > 0 else 0.0
 
             return combined
 

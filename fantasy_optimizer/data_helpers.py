@@ -156,8 +156,12 @@ def get_weekly_roster_data(gm, league_id, week_num):
                 for stat, value in player_projections.items():
                     if stat not in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age'] and value is not None:
                         try:
-                            # Note: The database should already contain per-game stats.
-                            weekly_projections[stat] = round(float(value) * num_games, 2)
+                            # FIX: Rate stats like GAA and SV% are averages and should not be multiplied by games.
+                            if stat in ['gaa', 'svpct']:
+                                weekly_projections[stat] = float(value)
+                            else:
+                                # Note: The database should already contain per-game stats.
+                                weekly_projections[stat] = round(float(value) * num_games, 2)
                         except (ValueError, TypeError):
                             weekly_projections[stat] = 0
                             continue
@@ -190,7 +194,6 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
 
     totals = defaultdict(float)
     daily_lineups = {}
-    goalie_starts_details = []
 
 
     simulated_roster = list(roster)
@@ -230,13 +233,6 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
             daily_lineups[date_str] = optimal_roster_tuples
 
             for player, pos_filled in optimal_roster_tuples:
-                if 'G' in player.get('positions', ''):
-                    goalie_starts_details.append({
-                        'gaa': player['per_game_projections'].get('gaa', 0),
-                        'ga': player['per_game_projections'].get('ga', 0),
-                        'gs': player['per_game_projections'].get('gs', 1) # Assume 1 GS if not specified
-                    })
-
                 # FIX: Sum all per-game counting stats daily. Rate stats will be calculated once at the end.
                 for stat, value in player['per_game_projections'].items():
                     # Skip non-stat fields and rate stats that need special calculation
@@ -254,10 +250,9 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
     else:
         totals['svpct'] = 0
 
-    total_ga_from_starts = sum(g['ga'] for g in goalie_starts_details)
-    total_gs_from_starts = sum(g['gs'] for g in goalie_starts_details)
-    if total_gs_from_starts > 0:
-        totals['gaa'] = total_ga_from_starts / total_gs_from_starts
+    # FIX: Correctly calculate GAA from summed totals, not by averaging daily GAAs.
+    if totals.get('gs', 0) > 0:
+        totals['gaa'] = totals['ga'] / totals['gs']
     else:
         totals['gaa'] = 0
 
