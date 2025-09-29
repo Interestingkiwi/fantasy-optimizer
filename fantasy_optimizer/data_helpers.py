@@ -10,6 +10,8 @@ import unicodedata
 from datetime import datetime, timedelta
 from collections import defaultdict
 import yahoo_fantasy_api as yfa
+from thefuzz import process
+
 
 from . import config
 
@@ -26,6 +28,27 @@ def normalize_name(name):
     ascii_name = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     # Remove all non-alphanumeric characters (keeps letters and numbers)
     return re.sub(r'[^a-z0-9]', '', ascii_name)
+
+def find_best_match(name, choices, score_cutoff=90):
+    """
+    Finds the best fuzzy match for a name from a dictionary of choices.
+
+    Args:
+        name (str): The name to match (e.g., from Yahoo).
+        choices (dict): A dictionary mapping normalized_name -> original_name from the DB.
+        score_cutoff (int): The minimum score (0-100) to consider a match.
+
+    Returns:
+        str: The best matching normalized_name, or None if no match meets the cutoff.
+    """
+    # extractOne returns a tuple of (best_match_original_name, score, best_match_normalized_key)
+    # We provide the original names for matching but want the key back.
+    best_match = process.extractOne(name, choices, score_cutoff=score_cutoff)
+
+    if best_match:
+        # The third element of the tuple is the key from the choices dict
+        return best_match[2]
+    return None
 
 def get_user_leagues(gm):
     """Fetches all hockey leagues for the authenticated user."""
@@ -52,6 +75,12 @@ def get_weekly_roster_data(gm, league_id, week_num):
     con = sqlite3.connect(config.DB_FILE)
     con.row_factory = sqlite3.Row
     cur = con.cursor()
+
+    # --- Pre-fetch all player names from DB for fuzzy matching ---
+    cur.execute("SELECT player_name, normalized_name FROM projections")
+    db_players = cur.fetchall()
+    db_player_choices = {p['normalized_name']: p['player_name'] for p in db_players}
+
 
     cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
     week_info = cur.fetchone()
@@ -105,6 +134,18 @@ def get_weekly_roster_data(gm, league_id, week_num):
 
                 cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_player_name,))
                 projection_row = cur.fetchone()
+
+                # --- Fuzzy Match Fallback ---
+                if not projection_row:
+                    print(f"No exact match for '{player['name']}' ({normalized_player_name}). Trying fuzzy match...")
+                    best_match_normalized = find_best_match(player['name'], db_player_choices)
+                    if best_match_normalized:
+                        print(f"Found fuzzy match: '{player['name']}' -> '{db_player_choices[best_match_normalized]}' ({best_match_normalized})")
+                        cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (best_match_normalized,))
+                        projection_row = cur.fetchone()
+                    else:
+                        print(f"No suitable fuzzy match found for '{player['name']}'.")
+
 
                 player_projections = dict(projection_row) if projection_row else {}
                 player_team_tricode = player_projections.get('team', 'N/A').upper() if player_projections else 'N/A'
@@ -265,6 +306,7 @@ def get_healthy_free_agents(lg):
 
     # 2. Fetch Players on Waivers
     try:
+        print("Fetching players on waivers...")
         waiver_players = lg.waivers()
         for p in waiver_players:
             p['availability'] = 'W'

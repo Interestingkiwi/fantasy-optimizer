@@ -13,7 +13,11 @@ from flask import Blueprint, jsonify, request, send_from_directory, session
 from yahoo_fantasy_api import game
 from . import config
 from .auth import get_oauth_client
-from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, normalize_name, get_healthy_free_agents
+from .data_helpers import (
+    get_user_leagues, get_weekly_roster_data,
+    calculate_optimized_totals, get_live_stats_for_team,
+    normalize_name, get_healthy_free_agents, find_best_match
+)
 from .optimization_logic import find_optimal_lineup
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
@@ -422,6 +426,12 @@ def api_free_agents():
         con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
+
+        # --- Pre-fetch all player names from DB for fuzzy matching ---
+        cur.execute("SELECT player_name, normalized_name FROM projections")
+        db_players = cur.fetchall()
+        db_player_choices = {p['normalized_name']: p['player_name'] for p in db_players}
+
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
         week_info = cur.fetchone()
         week_dates = {'start': date.fromisoformat(week_info['start_date']), 'end': date.fromisoformat(week_info['end_date'])}
@@ -473,6 +483,14 @@ def api_free_agents():
 
                 cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_fa_name,))
                 fa_proj_row = cur.fetchone()
+
+                # --- Fuzzy Match Fallback ---
+                if not fa_proj_row:
+                    best_match_normalized = find_best_match(fa['name'], db_player_choices)
+                    if best_match_normalized:
+                        cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (best_match_normalized,))
+                        fa_proj_row = cur.fetchone()
+
                 if not fa_proj_row: continue
                 fa_proj = dict(fa_proj_row)
 
