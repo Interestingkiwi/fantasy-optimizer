@@ -24,6 +24,16 @@ TEAM_TRICODES = [
     "UTA", "VAN", "VGK", "WSH", "WPG"
 ]
 
+TEAM_TRICODE_MAP = {
+    "TB": "TBL",
+    "NJ": "NJD",
+    "SJ": "SJS",
+    "LA": "LAK",
+    "MON": "MTL",
+    "WAS": "WSH"
+}
+
+
 def normalize_name(name):
     """
     Normalizes a player name by converting to lowercase, removing diacritics,
@@ -177,7 +187,13 @@ def setup_projections_table(cursor):
                 player_name = row[p_name_idx]
                 if not player_name: continue
                 normalized = normalize_name(player_name)
-                player_data[normalized] = {sanitized_headers[i]: val for i, val in enumerate(row)}
+
+                data_dict = {sanitized_headers[i]: val for i, val in enumerate(row)}
+                team_abbr = data_dict.get('team', '').upper()
+                if team_abbr in TEAM_TRICODE_MAP:
+                    data_dict['team'] = TEAM_TRICODE_MAP[team_abbr]
+                player_data[normalized] = data_dict
+
                 player_data[normalized]['normalized_name'] = normalized
 
         # Process Goalies from gprojections.csv, updating or adding to the player_data dict
@@ -210,6 +226,10 @@ def setup_projections_table(cursor):
                 normalized = normalize_name(player_name)
 
                 goalie_row_data = {sanitized_headers[i]: val for i, val in enumerate(row)}
+                team_abbr = goalie_row_data.get('team', '').upper()
+                if team_abbr in TEAM_TRICODE_MAP:
+                    goalie_row_data['team'] = TEAM_TRICODE_MAP[team_abbr]
+
                 if 'positions' not in goalie_row_data or not goalie_row_data['positions']:
                     goalie_row_data['positions'] = 'G'
 

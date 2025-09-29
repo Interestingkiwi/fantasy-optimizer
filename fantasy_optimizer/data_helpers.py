@@ -249,14 +249,17 @@ def get_healthy_free_agents(lg):
     players with an injury status that makes them eligible for an IR slot.
     """
     print("Fetching free agents from Yahoo API...")
-    try:
-        yahoo_fas_skaters = lg.free_agents('P')
-        yahoo_fas_goalies = lg.free_agents('G')
-        all_yahoo_fas = yahoo_fas_skaters + yahoo_fas_goalies
-        print(f"Found {len(all_yahoo_fas)} total free agents in the league.")
-    except Exception as e:
-        print(f"Could not fetch free agents from Yahoo: {e}")
-        return []
+    all_yahoo_fas = []
+    # Iterate through all positions to ensure all players are fetched
+    for pos in ['C', 'LW', 'RW', 'D', 'G']:
+        try:
+            print(f"Fetching free agents for position: {pos}")
+            all_yahoo_fas.extend(lg.free_agents(pos))
+        except Exception as e:
+            print(f"Could not fetch FAs for position {pos}: {e}")
+            continue
+
+    print(f"Found {len(all_yahoo_fas)} total free agents in the league.")
 
     # These are statuses that typically allow a player to be placed on IR/IR+
     INJURY_STATUSES_TO_EXCLUDE = ['O', 'DTD', 'IR', 'IR-LT', 'NA', 'IL']
