@@ -191,6 +191,9 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
     totals = defaultdict(float)
     daily_lineups = {}
 
+    total_gaa_sum = 0.0
+    total_goalie_starts = 0
+
     simulated_roster = list(roster)
     transactions.sort(key=lambda x: x['date'])
     trans_index = 0
@@ -228,6 +231,12 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
             daily_lineups[date_str] = optimal_roster_tuples
 
             for player, pos_filled in optimal_roster_tuples:
+                if pos_filled == 'G':
+                    total_goalie_starts += 1
+                    try:
+                        total_gaa_sum += float(player['per_game_projections'].get('gaa', 0.0))
+                    except (ValueError, TypeError):
+                        pass
                 # FIX: Sum all per-game counting stats daily. Rate stats will be calculated once at the end.
                 for stat, value in player['per_game_projections'].items():
                     # Skip non-stat fields and rate stats that need special calculation
@@ -245,9 +254,8 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
     else:
         totals['svpct'] = 0
 
-    # Use games started (gs) for a more accurate GAA calculation if available
-    if totals.get('gs', 0) > 0:
-        totals['gaa'] = totals['ga'] / totals['gs']
+    if total_goalie_starts > 0:
+        totals['gaa'] = total_gaa_sum / total_goalie_starts
     else:
         totals['gaa'] = 0
 
