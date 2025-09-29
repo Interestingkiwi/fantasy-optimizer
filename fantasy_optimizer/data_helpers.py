@@ -190,6 +190,8 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
 
     totals = defaultdict(float)
     daily_lineups = {}
+    goalie_starts_details = []
+
 
     simulated_roster = list(roster)
     transactions.sort(key=lambda x: x['date'])
@@ -228,10 +230,17 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
             daily_lineups[date_str] = optimal_roster_tuples
 
             for player, pos_filled in optimal_roster_tuples:
+                if 'G' in player.get('positions', ''):
+                    goalie_starts_details.append({
+                        'gaa': player['per_game_projections'].get('gaa', 0),
+                        'ga': player['per_game_projections'].get('ga', 0),
+                        'gs': player['per_game_projections'].get('gs', 1) # Assume 1 GS if not specified
+                    })
+
                 # FIX: Sum all per-game counting stats daily. Rate stats will be calculated once at the end.
                 for stat, value in player['per_game_projections'].items():
                     # Skip non-stat fields and rate stats that need special calculation
-                    if stat in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age', 'sv_pct', 'gaa'] or value is None:
+                    if stat in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age', 'svpct', 'gaa'] or value is None:
                         continue
                     try:
                         totals[stat] += float(value)
@@ -245,17 +254,25 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
     else:
         totals['svpct'] = 0
 
-    # Use games started (gs) for a more accurate GAA calculation if available
-    if totals.get('gs', 0) > 0:
-        totals['gaa'] = totals['ga'] / totals['gs']
+    total_ga_from_starts = sum(g['ga'] for g in goalie_starts_details)
+    total_gs_from_starts = sum(g['gs'] for g in goalie_starts_details)
+    if total_gs_from_starts > 0:
+        totals['gaa'] = total_ga_from_starts / total_gs_from_starts
     else:
         totals['gaa'] = 0
+
 
     # Final rounding on all stats
     final_totals = {
         stat: round(value, 3 if stat in ['svpct', 'gaa'] else 2)
         for stat, value in totals.items()
     }
+    # Pass back the raw totals for accurate live projection calculation
+    final_totals['raw_ga'] = totals.get('ga', 0)
+    final_totals['raw_gs'] = totals.get('gs', 0)
+    final_totals['raw_sv'] = totals.get('sv', 0)
+    final_totals['raw_sa'] = totals.get('sa', 0)
+
     return final_totals, daily_lineups, simulated_roster
 
 
