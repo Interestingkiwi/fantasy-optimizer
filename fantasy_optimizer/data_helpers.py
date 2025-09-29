@@ -8,6 +8,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timedelta
+from collections import defaultdict
 import yahoo_fantasy_api as yfa
 
 from . import config
@@ -146,11 +147,8 @@ def get_weekly_roster_data(gm, league_id, week_num):
 def calculate_optimized_totals(roster, week_num, schedules, week_dates, transactions=[]):
     from .optimization_logic import find_optimal_lineup
 
-    totals = {}
+    totals = defaultdict(float)
     daily_lineups = {}
-    goalie_avg_stats = ['svpct', 'ga']
-    goalie_stat_numerator = {stat: 0 for stat in goalie_avg_stats}
-    total_goalie_starts = 0
 
     simulated_roster = list(roster)
     transactions.sort(key=lambda x: x['date'])
@@ -180,7 +178,8 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
                 simulated_roster.append(new_player_data)
             trans_index += 1
 
-        active_today = [p for p in simulated_roster if p.get('team') in schedules and date_str in schedules[p.get('team')]]
+        active_today = [p for p in simulated_roster if p.get('team') in schedules and date_str in schedules.get(p.get('team'), [])]
+
 
         optimal_roster_tuples = []
         if active_today:
@@ -188,25 +187,35 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
             daily_lineups[date_str] = optimal_roster_tuples
 
             for player, pos_filled in optimal_roster_tuples:
+                # FIX: Sum all per-game counting stats daily. Rate stats will be calculated once at the end.
                 for stat, value in player['per_game_projections'].items():
-                    if stat in ['player_name', 'team']: continue
+                    # Skip non-stat fields and rate stats that need special calculation
+                    if stat in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age', 'sv_pct', 'gaa'] or value is None:
+                        continue
                     try:
-                        numeric_value = float(value)
-                        if 'G' in player.get('positions', '') and stat in goalie_avg_stats:
-                            goalie_stat_numerator[stat] += numeric_value
-                        else:
-                            totals[stat] = totals.get(stat, 0) + numeric_value
-                    except (ValueError, TypeError): continue
-                if 'G' in player.get('positions', ''):
-                    total_goalie_starts += 1
+                        totals[stat] += float(value)
+                    except (ValueError, TypeError):
+                        continue
         current_date += timedelta(days=1)
 
-    for stat in goalie_avg_stats:
-        totals[stat] = (goalie_stat_numerator[stat] / total_goalie_starts) if total_goalie_starts > 0 else 0
+    # Post-process goalie rate stats from the weekly totals
+    if totals.get('sa', 0) > 0:
+        totals['sv_pct'] = totals['sv'] / totals['sa']
+    else:
+        totals['sv_pct'] = 0
 
-    for stat, value in totals.items():
-        totals[stat] = round(value, 3 if stat == 'svpct' else 2)
-    return totals, daily_lineups, simulated_roster
+    # Use games started (gs) for a more accurate GAA calculation if available
+    if totals.get('gs', 0) > 0:
+        totals['gaa'] = totals['ga'] / totals['gs']
+    else:
+        totals['gaa'] = 0
+
+    # Final rounding on all stats
+    final_totals = {
+        stat: round(value, 3 if stat in ['sv_pct', 'gaa'] else 2)
+        for stat, value in totals.items()
+    }
+    return final_totals, daily_lineups, simulated_roster
 
 
 def get_live_stats_for_team(lg, team_name, week_num):

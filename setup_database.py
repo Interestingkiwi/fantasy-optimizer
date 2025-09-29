@@ -45,6 +45,9 @@ def sanitize_header(header_list):
         clean_h = h.strip().lower()
         if clean_h == '"+/-"':
             sanitized.append('plus_minus')
+        # FIX: Add specific handling for sv% to prevent collision with sv
+        elif clean_h == 'sv%':
+            sanitized.append('sv_pct')
         else:
             sanitized.append(re.sub(r'[^a-zA-Z0-9_]', '', clean_h.replace(' ', '_')))
     return sanitized
@@ -127,12 +130,18 @@ def setup_projections_table(cursor):
             except ValueError as e:
                 raise ValueError(f"Missing column in {SKATER_CSV_FILE}: {e}")
 
-            # FIX: Corrected and expanded the list of stats that are season totals and need to be converted to per-game averages.
-            skater_stats_to_convert = [
-                'goals', 'assists', 'points', 'ppg', 'ppa', 'pp points', 'shg', 'sha', 'shp',
-                'hits', 'blk', 'pim', 'fow', 'fol', 'sog', '"+/-"', 'vor', 'unadj vor', 'fp unadj'
+            # FIX: Use an exclude list for more robust stat conversion.
+            # This prevents stats from being missed if not in the include list.
+            skater_stats_to_exclude = [
+                'player name', 'age', 'positions', 'team', 'salary', 'gp org', 'gp',
+                'toi org es', 'toi org pp', 'toi org pk', 'toi es', 'toi pp', 'toi pk', 'total toi',
+                'rank', 'playerid', 'fantasy team'
             ]
-            skater_stat_indices = [i for i, h in enumerate(header_lower) if h in skater_stats_to_convert]
+            skater_stat_indices = [
+                i for i, h in enumerate(header_lower)
+                if h not in skater_stats_to_exclude and h.strip() != ''
+            ]
+
 
             for row in reader:
                 if not row or (pos_idx < len(row) and 'G' in row[pos_idx]): continue
@@ -156,9 +165,15 @@ def setup_projections_table(cursor):
             except ValueError as e:
                 raise ValueError(f"Missing column in {GOALIE_CSV_FILE}: {e}")
 
-            # FIX: Corrected and expanded the list of goalie stats that are season totals. Rate stats like GAA and SV% are excluded.
-            goalie_stats_to_convert = ['w', 'l', 'otl', 'ga', 'sa', 'sv', 'so', 'qs', 'rbs', 'vor', 'pts']
-            goalie_stat_indices = [i for i, h in enumerate(header_lower) if h in goalie_stats_to_convert]
+            # FIX: Use an exclude list for goalies. Rate stats (sv%, gaa) should not be converted.
+            goalie_stats_to_exclude = [
+                'player name', 'team', 'age', 'position', 'salary', 'gs', 'sv%', 'gaa',
+                'rank', 'playerid', 'fantasy team'
+            ]
+            goalie_stat_indices = [
+                i for i, h in enumerate(header_lower)
+                if h not in goalie_stats_to_exclude and h.strip() != ''
+            ]
 
             for row in reader:
                 if not row: continue
