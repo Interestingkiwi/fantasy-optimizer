@@ -164,7 +164,7 @@ def api_get_matchup():
                     combined[key] = remainder.get(key, 0)
 
             if 'svpct' in live: combined['svpct'] = float(live.get('svpct', 0))
-            if 'ga' in live: combined['ga'] = float(live.get('ga', 0))
+            if 'gaa' in live: combined['gaa'] = float(live.get('gaa', 0))
             return combined
 
         team1_live_proj = combine_stats(team1_live_stats, team1_remainder)
@@ -261,7 +261,7 @@ def api_optimizer():
         return error
 
     try:
-        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
+        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'gaa']
 
         all_rosters = get_weekly_roster_data(gm, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
@@ -285,7 +285,7 @@ def api_optimizer():
         opponent_totals, _, _ = calculate_optimized_totals(opponent_roster, week_num, schedules, week_dates)
 
         category_weights = {}
-        inverse_stats = ['ga']
+        inverse_stats = ['gaa']
 
         for stat in LEAGUE_CATEGORIES:
             my_stat = my_totals.get(stat, 0)
@@ -442,12 +442,12 @@ def api_free_agents():
         my_totals, my_daily_lineups, _ = calculate_optimized_totals(my_roster, week_num, schedules, week_dates)
         opponent_totals, _, _ = calculate_optimized_totals(opponent_roster, week_num, schedules, week_dates)
 
-        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
+        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'gaa']
         category_weights = {}
         for stat in LEAGUE_CATEGORIES:
             my_stat, opp_stat = my_totals.get(stat, 0), opponent_totals.get(stat, 0)
             diff = my_stat - opp_stat
-            if stat == 'ga': diff = -diff
+            if stat == 'gaa': diff = -diff
             if diff < -2: category_weights[stat] = 3.0
             elif diff < 0: category_weights[stat] = 2.0
             elif diff < 2: category_weights[stat] = 1.0
@@ -462,7 +462,7 @@ def api_free_agents():
             for stat, weight in category_weights.items():
                 try: stat_val = float(p['per_game_projections'].get(stat, 0.0))
                 except (ValueError, TypeError): stat_val = 0.0
-                value += (stat_val * weight if stat != 'ga' else -stat_val * weight) * starts
+                value += (stat_val * weight if stat != 'gaa' else -stat_val * weight) * starts
             my_player_values.append({'name': p['name'], 'value': value})
 
         ideal_drop = min(my_player_values, key=lambda x: x['value']) if my_player_values else None
@@ -530,7 +530,7 @@ def api_free_agents():
                             for stat, weight in category_weights.items():
                                 try: stat_val = float(fa_proj.get(stat, 0.0))
                                 except (ValueError, TypeError): stat_val = 0.0
-                                value += (stat_val * weight) if stat != 'ga' else -(stat_val * weight)
+                                value += (stat_val * weight) if stat != 'gaa' else -(stat_val * weight)
                             fa_data['weekly_impact_score'] += value
                     current_date += timedelta(days=1)
 

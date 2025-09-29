@@ -6,7 +6,7 @@
  */
 
 // --- Constants ---
-const STATS_TO_DISPLAY_H2H = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga'];
+const STATS_TO_DISPLAY_H2H = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'gaa'];
 const FANTASY_WEEKS = 25;
 const MAX_TRANSACTIONS = 4;
 
@@ -261,7 +261,7 @@ export function createFreeAgentTable(freeAgents, weights) {
         const style = weight >= 2.0 ? 'style="background-color: #ffeeba;"' : '';
         return `<th ${style}>${stat.toUpperCase()}</th>`;
     }).join('');
-    table.innerHTML = `<thead><tr><th>Player</th><th>Status</th><th>Positions</th><th>Games</th>${headerStats}<th>Start Days</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Positions</th><th>Games</th>${headerStats}<th>Start Days</th></tr></thead>`;
 
     const tbody = document.createElement('tbody');
     if (freeAgents.length === 0) {
@@ -272,6 +272,7 @@ export function createFreeAgentTable(freeAgents, weights) {
             tbody.innerHTML += `
                 <tr>
                     <td>${fa.name}</td>
+                    <td>${fa.team}</td>
                     <td>${fa.availability || 'FA'}</td>
                     <td>${fa.positions}</td>
                     <td>${fa.games_this_week}</td>
