@@ -373,6 +373,16 @@ def api_weekly_optimizer():
             starts = player_start_days.get(player['name'], [])
             player_data['starts_this_week'] = len(starts)
             player_data['start_days'] = ', '.join(starts)
+
+            player_team = player.get('team', 'N/A')
+            player_schedule_dates = schedules.get(player_team, [])
+            team_games_this_week = [
+                datetime.fromisoformat(d).strftime('%a')
+                for d in player_schedule_dates
+                if start_date <= datetime.fromisoformat(d).date() <= end_date
+            ]
+            player_data['team_game_days'] = ', '.join(team_games_this_week)
+
             utilization_roster.append(player_data)
 
         return jsonify({

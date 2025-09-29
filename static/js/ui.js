@@ -112,14 +112,14 @@ export function createUtilizationTable(roster, titleText) {
     container.appendChild(title);
 
     const table = document.createElement('table');
-    table.innerHTML = `<thead><tr><th>Player</th><th>Positions</th><th>Games</th><th>Starts</th><th>Util %</th><th>Start Days</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th>Player</th><th>Positions</th><th>Games</th><th>Starts</th><th>Util %</th><th>Start Days</th><th>Team Games</th></tr></thead>`;
     const tbody = document.createElement('tbody');
     roster.sort((a, b) => b.starts_this_week - a.starts_this_week);
     roster.forEach(player => {
         const games = player.games_this_week, starts = player.starts_this_week;
         const util = games > 0 ? `${((starts / games) * 100).toFixed(0)}%` : 'N/A';
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${player.name}</td><td>${player.positions}</td><td>${games}</td><td>${starts}</td><td>${util}</td><td>${player.start_days || ''}</td>`;
+        row.innerHTML = `<td>${player.name}</td><td>${player.positions}</td><td>${games}</td><td>${starts}</td><td>${util}</td><td>${player.start_days || ''}</td><td>${player.team_game_days || ''}</td>`;
         if (games > 0 && starts < games) row.style.backgroundColor = '#fff5f5';
         tbody.appendChild(row);
     });
@@ -261,7 +261,7 @@ export function createFreeAgentTable(freeAgents, weights) {
         const style = weight >= 2.0 ? 'style="background-color: #ffeeba;"' : '';
         return `<th ${style}>${stat.toUpperCase()}</th>`;
     }).join('');
-    table.innerHTML = `<thead><tr><th>Player</th><th>Status</th><th>Positions</th><th>Games</th>${headerStats}<th>Start Days</th><th>Drop Candidate</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th>Player</th><th>Status</th><th>Positions</th><th>Games</th>${headerStats}<th>Start Days</th></tr></thead>`;
 
     const tbody = document.createElement('tbody');
     if (freeAgents.length === 0) {
@@ -277,7 +277,6 @@ export function createFreeAgentTable(freeAgents, weights) {
                     <td>${fa.games_this_week}</td>
                     ${statCells}
                     <td>${fa.start_days}</td>
-                    <td>${fa.suggested_drop}</td>
                 </tr>`;
         });
     }
