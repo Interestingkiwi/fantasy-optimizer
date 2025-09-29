@@ -245,25 +245,41 @@ def get_live_stats_for_team(lg, team_name, week_num):
 
 def get_healthy_free_agents(lg):
     """
-    Fetches all free agents from Yahoo for a given league and filters out
-    players with an injury status that makes them eligible for an IR slot.
+    Fetches all free agents AND players on waivers from Yahoo for a given league
+    and filters out players with an injury status that makes them eligible for an IR slot.
+    It also adds an 'availability' status ('FA' or 'W') to each player.
     """
-    print("Fetching free agents from Yahoo API...")
-    all_yahoo_fas = []
-    # Iterate through all positions to ensure all players are fetched
+    print("Fetching available players (Free Agents & Waivers) from Yahoo API...")
+    available_players = []
+
+    # 1. Fetch Free Agents by position
     for pos in ['C', 'LW', 'RW', 'D', 'G']:
         try:
             print(f"Fetching free agents for position: {pos}")
-            all_yahoo_fas.extend(lg.free_agents(pos))
+            fas = lg.free_agents(pos)
+            for p in fas:
+                p['availability'] = 'FA'
+            available_players.extend(fas)
         except Exception as e:
             print(f"Could not fetch FAs for position {pos}: {e}")
-            continue
 
-    print(f"Found {len(all_yahoo_fas)} total free agents in the league.")
+    # 2. Fetch Players on Waivers
+    try:
+        waiver_players = lg.waivers()
+        for p in waiver_players:
+            p['availability'] = 'W'
+        available_players.extend(waiver_players)
+        print(f"Found {len(waiver_players)} players on waivers.")
+    except Exception as e:
+        print(f"Could not fetch players on waivers: {e}")
 
-    # These are statuses that typically allow a player to be placed on IR/IR+
+    # Remove duplicates that might appear in both lists
+    unique_players = list({p['player_id']: p for p in available_players}.values())
+    print(f"Found {len(unique_players)} total unique available players.")
+
+    # 3. Filter out injured players
     INJURY_STATUSES_TO_EXCLUDE = ['O', 'DTD', 'IR', 'IR-LT', 'NA', 'IL']
+    healthy_available_players = [p for p in unique_players if p.get('status', '') not in INJURY_STATUSES_TO_EXCLUDE]
 
-    healthy_yahoo_fas = [p for p in all_yahoo_fas if p.get('status', '') not in INJURY_STATUSES_TO_EXCLUDE]
-    print(f"Found {len(healthy_yahoo_fas)} healthy free agents.")
-    return healthy_yahoo_fas
+    print(f"Found {len(healthy_available_players)} healthy available players.")
+    return healthy_available_players

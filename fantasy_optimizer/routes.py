@@ -471,7 +471,17 @@ def api_free_agents():
                 games_this_week = sum(1 for d_str in fa_schedule if week_dates['start'] <= date.fromisoformat(d_str) <= week_dates['end'])
                 if games_this_week == 0: continue
 
-                fa_data = { "name": fa['name'], "positions": ', '.join(fa['eligible_positions']), "team": fa_team, "per_game_projections": fa_proj, "weekly_impact_score": 0, "games_this_week": games_this_week, "start_days": [], "weekly_projections": {} }
+                fa_data = {
+                    "name": fa['name'],
+                    "positions": ', '.join(fa['eligible_positions']),
+                    "team": fa_team,
+                    "per_game_projections": fa_proj,
+                    "weekly_impact_score": 0,
+                    "games_this_week": games_this_week,
+                    "start_days": [],
+                    "weekly_projections": {},
+                    "availability": fa.get('availability', 'FA')
+                }
 
                 for stat, value in fa_proj.items():
                     if stat not in ['player_name', 'team', 'positions'] and value is not None:

@@ -261,17 +261,18 @@ export function createFreeAgentTable(freeAgents, weights) {
         const style = weight >= 2.0 ? 'style="background-color: #ffeeba;"' : '';
         return `<th ${style}>${stat.toUpperCase()}</th>`;
     }).join('');
-    table.innerHTML = `<thead><tr><th>Player</th><th>Positions</th><th>Games</th>${headerStats}<th>Start Days</th><th>Drop Candidate</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th>Player</th><th>Status</th><th>Positions</th><th>Games</th>${headerStats}<th>Start Days</th><th>Drop Candidate</th></tr></thead>`;
 
     const tbody = document.createElement('tbody');
     if (freeAgents.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${5 + STATS_TO_DISPLAY_H2H.length}">No valuable free agents found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${6 + STATS_TO_DISPLAY_H2H.length}">No valuable free agents found.</td></tr>`;
     } else {
         freeAgents.forEach(fa => {
             const statCells = STATS_TO_DISPLAY_H2H.map(stat => `<td>${fa.weekly_projections[stat] || 0}</td>`).join('');
             tbody.innerHTML += `
                 <tr>
                     <td>${fa.name}</td>
+                    <td>${fa.availability || 'FA'}</td>
                     <td>${fa.positions}</td>
                     <td>${fa.games_this_week}</td>
                     ${statCells}
