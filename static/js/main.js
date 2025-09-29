@@ -292,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const teamTitle = document.createElement('h2');
                 teamTitle.textContent = teamName;
                 rostersContainer.appendChild(teamTitle);
-                rostersContainer.appendChild(ui.createPlayerTable(allRosters[teamName], 'g'));
+                rostersContainer.appendChild(ui.createPlayerTable(allRosters[teamName]));
             }
         } catch (error) {
             ui.showError(rostersContainer, error.message);
