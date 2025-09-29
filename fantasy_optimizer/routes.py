@@ -137,11 +137,25 @@ def api_get_matchup():
         off_days = [row[0] for row in cur.fetchall()]
         con.close()
 
-        team1_full_proj, _, _ = calculate_optimized_totals(team1_roster, week_num, schedules, full_week_dates)
-        team2_full_proj, _, _ = calculate_optimized_totals(team2_roster, week_num, schedules, full_week_dates)
-
         team1_live_stats = get_live_stats_for_team(lg, team1_name, week_num)
         team2_live_stats = get_live_stats_for_team(lg, team2_name, week_num)
+
+        def format_live_stats(stats):
+            """Formats the raw live stats from Yahoo, rounding goalie rate stats."""
+            formatted_stats = {}
+            for key, value in stats.items():
+                try:
+                    num_value = float(value)
+                    if key in ['svpct', 'gaa']:
+                        formatted_stats[key] = round(num_value, 3)
+                    else:
+                        formatted_stats[key] = num_value
+                except (ValueError, TypeError):
+                    formatted_stats[key] = value
+            return formatted_stats
+
+        team1_current_stats = format_live_stats(team1_live_stats)
+        team2_current_stats = format_live_stats(team2_live_stats)
 
         today = date.today()
         remainder_start = max(today, full_week_dates['start'])
@@ -196,8 +210,8 @@ def api_get_matchup():
         team2_live_proj = combine_stats(team2_live_stats, team2_remainder)
 
         return jsonify({
-            team1_name: {"full_week_proj": team1_full_proj, "live_proj": team1_live_proj},
-            team2_name: {"full_week_proj": team2_full_proj, "live_proj": team2_live_proj},
+            team1_name: {"current_stats": team1_current_stats, "live_proj": team1_live_proj},
+            team2_name: {"current_stats": team2_current_stats, "live_proj": team2_live_proj},
             "off_days": off_days
         })
     except Exception as e:

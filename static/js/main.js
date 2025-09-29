@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const data = await api.fetchMatchup(leagueId, week, myTeam, opponent);
             matchupContainer.innerHTML = '';
-            matchupContainer.appendChild(ui.createSummaryTable(myTeam, data[myTeam].full_week_proj, data[myTeam].live_proj, opponent, data[opponent].full_week_proj, data[opponent].live_proj));
+            matchupContainer.appendChild(ui.createSummaryTable(myTeam, data[myTeam].current_stats, data[myTeam].live_proj, opponent, data[opponent].current_stats, data[opponent].live_proj));
             if (data.off_days) {
                 matchupContainer.appendChild(ui.createOffDaysSection(data.off_days));
             }
