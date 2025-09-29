@@ -5,10 +5,26 @@ in routes.py cleaner and focused on request/response logic.
 """
 import sqlite3
 import json
+import re
+import unicodedata
 from datetime import datetime, timedelta
 import yahoo_fantasy_api as yfa
 
 from . import config
+
+def normalize_name(name):
+    """
+    Normalizes a player name by converting to lowercase, removing diacritics,
+    and removing all non-alphanumeric characters.
+    """
+    if not name:
+        return ""
+    # NFD form separates combined characters into base characters and diacritics
+    nfkd_form = unicodedata.normalize('NFKD', name.lower())
+    # Keep only ASCII characters
+    ascii_name = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    # Remove all non-alphanumeric characters (keeps letters and numbers)
+    return re.sub(r'[^a-z0-9]', '', ascii_name)
 
 def get_user_leagues(gm):
     """Fetches all hockey leagues for the authenticated user."""
@@ -71,7 +87,9 @@ def get_weekly_roster_data(gm, league_id, week_num):
             roster_data = []
 
             for player in roster:
-                cur.execute("SELECT * FROM projections WHERE player_name = ?", (player['name'],))
+                # Normalize the player name from Yahoo for a robust DB lookup.
+                normalized_player_name = normalize_name(player['name'])
+                cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_player_name,))
                 projection_row = cur.fetchone()
 
                 player_projections = dict(projection_row) if projection_row else {}
@@ -132,7 +150,8 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
             con = sqlite3.connect(config.DB_FILE)
             con.row_factory = sqlite3.Row
             cur = con.cursor()
-            cur.execute("SELECT * FROM projections WHERE player_name = ?", (move['add'],))
+            normalized_add_name = normalize_name(move['add'])
+            cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_add_name,))
             new_player_proj = cur.fetchone()
             con.close()
             if new_player_proj:

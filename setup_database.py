@@ -5,12 +5,14 @@ import re
 import requests
 import json
 import time
+import unicodedata
 from datetime import date, timedelta
 from collections import Counter, defaultdict
 
 # --- Configuration ---
 DB_FILE = "projections.db"
-CSV_FILE = "projections.csv"
+SKATER_CSV_FILE = "projections.csv"
+GOALIE_CSV_FILE = "gprojections.csv"
 START_DATE = date(2025, 10, 7)
 END_DATE = date(2026, 4, 17)
 NHL_TEAM_COUNT = 32
@@ -22,51 +24,171 @@ TEAM_TRICODES = [
     "UTA", "VAN", "VGK", "WSH", "WPG"
 ]
 
+def normalize_name(name):
+    """
+    Normalizes a player name by converting to lowercase, removing diacritics,
+    and removing all non-alphanumeric characters.
+    """
+    if not name:
+        return ""
+    # NFD form separates combined characters into base characters and diacritics
+    nfkd_form = unicodedata.normalize('NFKD', name.lower())
+    # Keep only ASCII characters
+    ascii_name = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    # Remove all non-alphanumeric characters (keeps letters and numbers)
+    return re.sub(r'[^a-z0-9]', '', ascii_name)
+
+def sanitize_header(header_list):
+    """Sanitizes a list of header strings for SQL compatibility."""
+    sanitized = []
+    for h in header_list:
+        clean_h = h.strip().lower()
+        if clean_h == '"+/-"':
+            sanitized.append('plus_minus')
+        else:
+            sanitized.append(re.sub(r'[^a-zA-Z0-9_]', '', clean_h.replace(' ', '_')))
+    return sanitized
+
+def calculate_per_game_stats(row, gp_index, stat_indices):
+    """
+    Takes a players total projected stat for a column, and converts it to a
+    per game figure by dividing it by expected games played.
+    """
+    try:
+        # Get the number of games played, default to 0 if it's not a valid number
+        games_played = float(row[gp_index])
+    except (ValueError, IndexError):
+        games_played = 0.0
+
+    # If games played is 0, we can't divide. All per-game stats will be 0.
+    if games_played == 0:
+        for i in stat_indices:
+            if i < len(row):
+                row[i] = 0.0
+        return row
+
+    # Loop through the stat columns and calculate the per-game average
+    for i in stat_indices:
+        if i < len(row):
+            try:
+                stat_value = float(row[i])
+                row[i] = round(stat_value / games_played, 4) # Calculate and round to 4 decimal places
+            except (ValueError, IndexError, TypeError):
+                # If the stat itself isn't a valid number, just set it to 0
+                row[i] = 0.0
+    return row
+
 def setup_projections_table(cursor):
-    """Creates and populates the 'projections' table from the CSV file."""
+    """Creates and populates the 'projections' table from both skater and goalie CSV files."""
     print("--- Setting up Projections Table ---")
     try:
-        with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
+        # Part 1: Define schema from both files and create table
+        def get_header_from_file(file_path):
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                return next(csv.reader(f))
+
+        skater_header_raw = get_header_from_file(SKATER_CSV_FILE)
+        goalie_header_raw = get_header_from_file(GOALIE_CSV_FILE)
+
+        sanitized_skater_headers = sanitize_header(skater_header_raw)
+        sanitized_goalie_headers = sanitize_header(goalie_header_raw)
+
+        all_headers = list(dict.fromkeys(sanitized_skater_headers + sanitized_goalie_headers))
+        final_headers = [h for h in all_headers if h]
+
+        if 'player_name' not in final_headers: raise ValueError("'player_name' column not found.")
+
+        columns_def_parts = [f'"{c}" REAL' for c in final_headers if c not in ['player_name', 'positions']]
+        columns_def_parts.insert(0, 'player_name TEXT PRIMARY KEY')
+        columns_def_parts.insert(1, 'positions TEXT')
+        columns_def_parts.append('normalized_name TEXT')
+
+        create_table_sql = f'CREATE TABLE projections ({", ".join(columns_def_parts)})'
+        create_index_sql = 'CREATE INDEX idx_normalized_name ON projections(normalized_name)'
+        cursor.execute("DROP TABLE IF EXISTS projections")
+        cursor.execute(create_table_sql)
+        cursor.execute(create_index_sql)
+        print("Table 'projections' and index created with a unified schema.")
+
+        # Part 2: Process data in memory from both files
+        player_data = {}
+
+        # Process Skaters from projections.csv
+        with open(SKATER_CSV_FILE, 'r', encoding='utf-8-sig') as f:
             reader = csv.reader(f)
             header_raw = next(reader)
+            header_lower = [h.strip().lower() for h in header_raw]
+            sanitized_headers = sanitize_header(header_raw)
 
-            def sanitize_header(header):
-                return [re.sub(r'[^a-zA-Z0-9_]', '', h.strip().replace(' ', '_').lower()) for h in header]
+            try:
+                p_name_idx = header_lower.index('player name')
+                gp_idx = header_lower.index('gp')
+                pos_idx = header_lower.index('positions')
+            except ValueError as e:
+                raise ValueError(f"Missing column in {SKATER_CSV_FILE}: {e}")
 
-            sql_headers_raw = sanitize_header(header_raw)
-            final_headers, indices_to_keep = [], []
-            for i, sql_h in enumerate(sql_headers_raw):
-                if sql_h:
-                    final_headers.append(sql_h)
-                    indices_to_keep.append(i)
+            skater_stats = ['toi', 'goals', 'assists', 'points', 'sog', 'ppg', 'ppa', 'pp points', 'shg', 'sha', 'shp', 'blk', 'hits', '"+/-"', 'pim', 'gwg', 'fow', 'fol']
+            skater_stat_indices = [i for i, h in enumerate(header_lower) if h in skater_stats]
 
-            if 'player_name' not in final_headers: raise ValueError("'Player Name' column not found.")
-            if 'positions' not in final_headers: raise ValueError("'Positions' column not found.")
+            for row in reader:
+                if not row or (pos_idx < len(row) and 'G' in row[pos_idx]): continue
+                calculate_per_game_stats(row, gp_idx, skater_stat_indices)
+                player_name = row[p_name_idx]
+                if not player_name: continue
+                normalized = normalize_name(player_name)
+                player_data[normalized] = {sanitized_headers[i]: val for i, val in enumerate(row)}
+                player_data[normalized]['normalized_name'] = normalized
 
-            columns_def_parts = [
-                'player_name TEXT PRIMARY KEY' if c == 'player_name' else
-                'positions TEXT' if c == 'positions' else
-                f'"{c}" REAL' for c in final_headers
-            ]
-
-            create_table_sql = f'CREATE TABLE projections ({", ".join(columns_def_parts)})'
-            cursor.execute("DROP TABLE IF EXISTS projections")
-            cursor.execute(create_table_sql)
-            print("Table 'projections' created.")
-
-        with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
+        # Process Goalies from gprojections.csv, updating or adding to the player_data dict
+        with open(GOALIE_CSV_FILE, 'r', encoding='utf-8-sig') as f:
             reader = csv.reader(f)
-            next(reader) # Skip header
+            header_raw = next(reader)
+            header_lower = [h.strip().lower() for h in header_raw]
+            sanitized_headers = sanitize_header(header_raw)
 
-            placeholders = ", ".join(['?'] * len(final_headers))
-            insert_sql = f'INSERT OR REPLACE INTO projections ({", ".join(f"`{h}`" for h in final_headers)}) VALUES ({placeholders})'
+            try:
+                p_name_idx = header_lower.index('player name')
+                gp_goalie_idx = header_lower.index('gs')  # Assuming 'GS' for games started
+            except ValueError as e:
+                raise ValueError(f"Missing column in {GOALIE_CSV_FILE}: {e}")
 
-            rows_to_insert = [[row[i] for i in indices_to_keep] for row in reader if len(row) >= len(header_raw)]
-            cursor.executemany(insert_sql, rows_to_insert)
-            print(f"Populated 'projections' table with {len(rows_to_insert)} rows.")
+            goalie_stats = ['w', 'l', 'otl', 'ga', 'sa', 'sv', 'so', 'qs']
+            goalie_stat_indices = [i for i, h in enumerate(header_lower) if h in goalie_stats]
 
-    except FileNotFoundError:
-        print(f"ERROR: {CSV_FILE} not found. Cannot set up projections table.")
+            for row in reader:
+                if not row: continue
+                calculate_per_game_stats(row, gp_goalie_idx, goalie_stat_indices)
+                player_name = row[p_name_idx]
+                if not player_name: continue
+                normalized = normalize_name(player_name)
+
+                goalie_row_data = {sanitized_headers[i]: val for i, val in enumerate(row)}
+                if 'positions' not in goalie_row_data or not goalie_row_data['positions']:
+                    goalie_row_data['positions'] = 'G'
+
+                if normalized in player_data:
+                    player_data[normalized].update(goalie_row_data)
+                else:
+                    goalie_row_data['normalized_name'] = normalized
+                    player_data[normalized] = goalie_row_data
+
+        print(f"Processed data for {len(player_data)} unique players from both files.")
+
+        # Part 3: Insert combined data into the database
+        insert_headers = final_headers + ['normalized_name']
+        placeholders = ", ".join(['?'] * len(insert_headers))
+        insert_sql = f'INSERT OR REPLACE INTO projections ({", ".join(f"`{h}`" for h in insert_headers)}) VALUES ({placeholders})'
+
+        rows_to_insert = []
+        for normalized_name, data_dict in player_data.items():
+            ordered_row = tuple(data_dict.get(h, None) for h in insert_headers)
+            rows_to_insert.append(ordered_row)
+
+        cursor.executemany(insert_sql, rows_to_insert)
+        print(f"Populated 'projections' table with {len(rows_to_insert)} rows.")
+
+    except FileNotFoundError as e:
+        print(f"ERROR: A required CSV file was not found: {e.filename}")
         raise
     except ValueError as e:
         print(f"ERROR: {e}")

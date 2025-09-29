@@ -6,12 +6,14 @@ application initialization logic.
 import sqlite3
 import json
 import time
+import re
+import unicodedata
 from datetime import date, timedelta, datetime
 from flask import Blueprint, jsonify, request, send_from_directory, session
 from yahoo_fantasy_api import game
 from . import config
 from .auth import get_oauth_client
-from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team
+from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, normalize_name
 from .optimization_logic import find_optimal_lineup
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
@@ -406,7 +408,7 @@ def api_free_agents():
         if not my_roster or not opponent_roster:
             return jsonify({"error": "Team names not found"}), 404
 
-        rostered_player_names = {p['name'] for r in all_rosters.values() for p in r}
+        normalized_rostered_names = {normalize_name(p['name']) for r in all_rosters.values() for p in r}
 
         con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
@@ -449,7 +451,7 @@ def api_free_agents():
         cur.execute("SELECT * FROM projections")
         all_db_players = cur.fetchall()
 
-        simulated_free_agents = [dict(p) for p in all_db_players if p['player_name'] not in rostered_player_names]
+        simulated_free_agents = [dict(p) for p in all_db_players if p['normalized_name'] not in normalized_rostered_names]
 
         evaluated_fas = []
         for fa_proj in simulated_free_agents:
