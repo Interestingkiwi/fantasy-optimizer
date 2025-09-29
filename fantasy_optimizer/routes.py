@@ -13,11 +13,7 @@ from flask import Blueprint, jsonify, request, send_from_directory, session
 from yahoo_fantasy_api import game
 from . import config
 from .auth import get_oauth_client
-from .data_helpers import (
-    get_user_leagues, get_weekly_roster_data,
-    calculate_optimized_totals, get_live_stats_for_team,
-    normalize_name, get_healthy_free_agents, find_best_match
-)
+from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, normalize_name, get_healthy_free_agents
 from .optimization_logic import find_optimal_lineup
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
@@ -155,17 +151,45 @@ def api_get_matchup():
         team2_remainder, _, _ = calculate_optimized_totals(team2_roster, week_num, schedules, remainder_week_dates)
 
         def combine_stats(live, remainder):
+            """Combines live and projected stats, correctly recalculating rate stats."""
             combined = {}
+            # Combine all counting stats by simple addition
             all_keys = set(live.keys()) | set(remainder.keys())
             for key in all_keys:
+                if key in ['svpct', 'gaa']: continue # Skip rate stats for now
                 try:
                     combined[key] = float(live.get(key, 0)) + remainder.get(key, 0)
                 except (ValueError, TypeError):
                     combined[key] = remainder.get(key, 0)
 
-            if 'svpct' in live: combined['svpct'] = float(live.get('svpct', 0))
-            if 'gaa' in live: combined['gaa'] = float(live.get('gaa', 0))
+            # --- Recalculate Goalie Rate Stats ---
+            try:
+                live_ga = float(live.get('ga', 0))
+                live_sv = float(live.get('sv', 0))
+                live_svpct = float(live.get('svpct', 0))
+                live_gaa = float(live.get('gaa', 0))
+                # Approximate live stats from what Yahoo provides
+                live_sa = live_sv / live_svpct if live_svpct > 0 else 0
+                live_gs = live_ga / live_gaa if live_gaa > 0 else 0
+            except (ValueError, TypeError):
+                live_ga, live_sv, live_sa, live_gs = 0.0, 0.0, 0.0, 0.0
+
+            rem_ga = remainder.get('ga', 0)
+            rem_sv = remainder.get('sv', 0)
+            rem_sa = remainder.get('sa', 0)
+            rem_gs = remainder.get('gs', 0)
+
+            total_ga = live_ga + rem_ga
+            total_sv = live_sv + rem_sv
+            total_sa = live_sa + rem_sa
+            total_gs = live_gs + rem_gs
+
+            # Update combined dictionary with correctly calculated rate stats
+            combined['gaa'] = total_ga / total_gs if total_gs > 0 else 0
+            combined['svpct'] = total_sv / total_sa if total_sa > 0 else 0
+
             return combined
+
 
         team1_live_proj = combine_stats(team1_live_stats, team1_remainder)
         team2_live_proj = combine_stats(team2_live_stats, team2_remainder)
@@ -261,7 +285,7 @@ def api_optimizer():
         return error
 
     try:
-        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'gaa']
+        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
 
         all_rosters = get_weekly_roster_data(gm, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
@@ -285,7 +309,7 @@ def api_optimizer():
         opponent_totals, _, _ = calculate_optimized_totals(opponent_roster, week_num, schedules, week_dates)
 
         category_weights = {}
-        inverse_stats = ['gaa']
+        inverse_stats = ['ga']
 
         for stat in LEAGUE_CATEGORIES:
             my_stat = my_totals.get(stat, 0)
@@ -378,14 +402,11 @@ def api_weekly_optimizer():
             player_data['starts_this_week'] = len(starts)
             player_data['start_days'] = ', '.join(starts)
 
-            player_team = player.get('team', 'N/A')
-            player_schedule_dates = schedules.get(player_team, [])
-            team_games_this_week = [
-                datetime.fromisoformat(d).strftime('%a')
-                for d in player_schedule_dates
-                if start_date <= datetime.fromisoformat(d).date() <= end_date
-            ]
-            player_data['team_game_days'] = ', '.join(team_games_this_week)
+            # Add team game days
+            player_team = player_data.get('team', 'N/A')
+            team_schedule = schedules.get(player_team, [])
+            team_game_days = [datetime.fromisoformat(d).strftime('%a') for d in team_schedule if start_date <= datetime.fromisoformat(d).date() <= end_date]
+            player_data['team_game_days'] = ', '.join(sorted(list(set(team_game_days)), key=['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].index))
 
             utilization_roster.append(player_data)
 
@@ -426,12 +447,6 @@ def api_free_agents():
         con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
-
-        # --- Pre-fetch all player names from DB for fuzzy matching ---
-        cur.execute("SELECT player_name, normalized_name FROM projections")
-        db_players = cur.fetchall()
-        db_player_choices = {p['normalized_name']: p['player_name'] for p in db_players}
-
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
         week_info = cur.fetchone()
         week_dates = {'start': date.fromisoformat(week_info['start_date']), 'end': date.fromisoformat(week_info['end_date'])}
@@ -442,12 +457,12 @@ def api_free_agents():
         my_totals, my_daily_lineups, _ = calculate_optimized_totals(my_roster, week_num, schedules, week_dates)
         opponent_totals, _, _ = calculate_optimized_totals(opponent_roster, week_num, schedules, week_dates)
 
-        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'gaa']
+        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
         category_weights = {}
         for stat in LEAGUE_CATEGORIES:
             my_stat, opp_stat = my_totals.get(stat, 0), opponent_totals.get(stat, 0)
             diff = my_stat - opp_stat
-            if stat == 'gaa': diff = -diff
+            if stat == 'ga': diff = -diff
             if diff < -2: category_weights[stat] = 3.0
             elif diff < 0: category_weights[stat] = 2.0
             elif diff < 2: category_weights[stat] = 1.0
@@ -462,7 +477,7 @@ def api_free_agents():
             for stat, weight in category_weights.items():
                 try: stat_val = float(p['per_game_projections'].get(stat, 0.0))
                 except (ValueError, TypeError): stat_val = 0.0
-                value += (stat_val * weight if stat != 'gaa' else -stat_val * weight) * starts
+                value += (stat_val * weight if stat != 'ga' else -stat_val * weight) * starts
             my_player_values.append({'name': p['name'], 'value': value})
 
         ideal_drop = min(my_player_values, key=lambda x: x['value']) if my_player_values else None
@@ -483,14 +498,6 @@ def api_free_agents():
 
                 cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_fa_name,))
                 fa_proj_row = cur.fetchone()
-
-                # --- Fuzzy Match Fallback ---
-                if not fa_proj_row:
-                    best_match_normalized = find_best_match(fa['name'], db_player_choices)
-                    if best_match_normalized:
-                        cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (best_match_normalized,))
-                        fa_proj_row = cur.fetchone()
-
                 if not fa_proj_row: continue
                 fa_proj = dict(fa_proj_row)
 
@@ -499,17 +506,7 @@ def api_free_agents():
                 games_this_week = sum(1 for d_str in fa_schedule if week_dates['start'] <= date.fromisoformat(d_str) <= week_dates['end'])
                 if games_this_week == 0: continue
 
-                fa_data = {
-                    "name": fa['name'],
-                    "positions": ', '.join(fa['eligible_positions']),
-                    "team": fa_team,
-                    "per_game_projections": fa_proj,
-                    "weekly_impact_score": 0,
-                    "games_this_week": games_this_week,
-                    "start_days": [],
-                    "weekly_projections": {},
-                    "availability": fa.get('availability', 'FA')
-                }
+                fa_data = { "name": fa['name'], "positions": ', '.join(fa['eligible_positions']), "team": fa_team, "per_game_projections": fa_proj, "weekly_impact_score": 0, "games_this_week": games_this_week, "start_days": [], "weekly_projections": {}, "availability": fa.get('availability', 'FA')}
 
                 for stat, value in fa_proj.items():
                     if stat not in ['player_name', 'team', 'positions'] and value is not None:
@@ -530,7 +527,7 @@ def api_free_agents():
                             for stat, weight in category_weights.items():
                                 try: stat_val = float(fa_proj.get(stat, 0.0))
                                 except (ValueError, TypeError): stat_val = 0.0
-                                value += (stat_val * weight) if stat != 'gaa' else -(stat_val * weight)
+                                value += (stat_val * weight) if stat != 'ga' else -(stat_val * weight)
                             fa_data['weekly_impact_score'] += value
                     current_date += timedelta(days=1)
 
@@ -575,11 +572,17 @@ def api_goalie_scenarios():
         lg = gm.to_league(league_id)
         live_stats = get_live_stats_for_team(lg, team_name, week_num)
 
-        current_ga = float(live_stats.get('ga', 0))
-        current_sv = float(live_stats.get('sv', 0))
-        svpct = float(live_stats.get('svpct', 0))
+        try:
+            current_ga = float(live_stats.get('ga', 0))
+            current_sv = float(live_stats.get('sv', 0))
+            svpct = float(live_stats.get('svpct', 0))
+            current_gaa = float(live_stats.get('gaa', 0.0))
+        except (ValueError, TypeError):
+             # Handle cases where stats might not be numbers yet (e.g., at week start)
+            current_ga, current_sv, svpct, current_gaa = 0.0, 0.0, 0.0, 0.0
+
         current_shots_against = current_sv / svpct if svpct > 0 else 0
-        current_gaa = float(live_stats.get('gaa', 0.0))
+
 
         scenarios_def = [
             {"name": "Excellent Start", "ga": 1, "svpct": 0.960},
@@ -598,9 +601,11 @@ def api_goalie_scenarios():
             new_total_shots = current_shots_against + hypo_shots
             new_svpct = new_total_sv / new_total_shots if new_total_shots > 0 else 0
 
+            # This part of the logic remains a bit abstract as we don't know live games started
+            # We will just show the resulting SV% as GAA would be a guess.
             results.append({
                 "name": f"{starts} {scenario['name']}(s)",
-                "gaa": "N/A",
+                "gaa": "N/A", # GAA is too complex to predict without knowing GS
                 "svpct": new_svpct
             })
 
