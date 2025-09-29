@@ -210,7 +210,7 @@ def setup_projections_table(cursor):
                 raise ValueError(f"Missing column in {GOALIE_CSV_FILE}: {e}")
 
             goalie_stats_to_exclude = [
-                'player name', 'team', 'age', 'position', 'salary', 'gs', 'sv%', 'gaa',
+                'player name', 'team', 'age', 'position', 'salary', 'ga', 'gs', 'sv%', 'gaa',
                 'rank', 'playerid', 'fantasy team'
             ]
             goalie_stat_indices = [
