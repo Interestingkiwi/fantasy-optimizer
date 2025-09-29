@@ -127,8 +127,12 @@ def setup_projections_table(cursor):
             except ValueError as e:
                 raise ValueError(f"Missing column in {SKATER_CSV_FILE}: {e}")
 
-            skater_stats = ['toi', 'goals', 'assists', 'points', 'sog', 'ppg', 'ppa', 'pp points', 'shg', 'sha', 'shp', 'blk', 'hits', '"+/-"', 'pim', 'gwg', 'fow', 'fol']
-            skater_stat_indices = [i for i, h in enumerate(header_lower) if h in skater_stats]
+            # FIX: Corrected and expanded the list of stats that are season totals and need to be converted to per-game averages.
+            skater_stats_to_convert = [
+                'goals', 'assists', 'points', 'ppg', 'ppa', 'pp points', 'shg', 'sha', 'shp',
+                'hits', 'blk', 'pim', 'fow', 'fol', 'sog', '"+/-"', 'vor', 'unadj vor', 'fp unadj'
+            ]
+            skater_stat_indices = [i for i, h in enumerate(header_lower) if h in skater_stats_to_convert]
 
             for row in reader:
                 if not row or (pos_idx < len(row) and 'G' in row[pos_idx]): continue
@@ -152,8 +156,9 @@ def setup_projections_table(cursor):
             except ValueError as e:
                 raise ValueError(f"Missing column in {GOALIE_CSV_FILE}: {e}")
 
-            goalie_stats = ['w', 'l', 'otl', 'ga', 'sa', 'sv', 'so', 'qs']
-            goalie_stat_indices = [i for i, h in enumerate(header_lower) if h in goalie_stats]
+            # FIX: Corrected and expanded the list of goalie stats that are season totals. Rate stats like GAA and SV% are excluded.
+            goalie_stats_to_convert = ['w', 'l', 'otl', 'ga', 'sa', 'sv', 'so', 'qs', 'rbs', 'vor', 'pts']
+            goalie_stat_indices = [i for i, h in enumerate(header_lower) if h in goalie_stats_to_convert]
 
             for row in reader:
                 if not row: continue

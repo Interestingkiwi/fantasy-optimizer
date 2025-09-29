@@ -89,6 +89,19 @@ def get_weekly_roster_data(gm, league_id, week_num):
             for player in roster:
                 # Normalize the player name from Yahoo for a robust DB lookup.
                 normalized_player_name = normalize_name(player['name'])
+
+                # FIX: Handle players with the same name (e.g., Sebastian Aho, Elias Pettersson)
+                # Projections may distinguish them by appending (F) or (D), which our normalize_name function includes.
+                # We need to construct the same normalized name from Yahoo data.
+                if normalized_player_name in ['sebastianaho', 'eliaspettersson']:
+                    is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in player['eligible_positions'])
+                    is_defense = 'D' in player['eligible_positions']
+
+                    if is_forward and not is_defense:
+                        normalized_player_name = f"{normalized_player_name}f"
+                    elif is_defense and not is_forward:
+                        normalized_player_name = f"{normalized_player_name}d"
+
                 cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_player_name,))
                 projection_row = cur.fetchone()
 
@@ -97,11 +110,14 @@ def get_weekly_roster_data(gm, league_id, week_num):
 
                 weekly_projections = {}
                 num_games = games_this_week.get(player_team_tricode, 0)
+                # FIX: Ensure all numeric stats are processed, not just a subset.
                 for stat, value in player_projections.items():
-                    if stat not in ['player_name', 'team'] and value is not None:
+                    if stat not in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age'] and value is not None:
                         try:
+                            # Note: The database should already contain per-game stats.
                             weekly_projections[stat] = round(float(value) * num_games, 2)
                         except (ValueError, TypeError):
+                            weekly_projections[stat] = 0
                             continue
 
                 player_data = {

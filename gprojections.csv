@@ -1,4 +1,4 @@
-player name,team,age,position,Salary,GS,W,L,OTL,GA,SA,SV,SV%,GAA,SO,QS,RBS,VOR,Rank,Pts,Fantasy Team,GP Org,playerId,,,
+player name,team,age,position,Salary,GS,W,L,OTL,GA,SA,SV,SV%,GAA,SO,QS,RBS,VOR,Rank,GPts,Fantasy Team,GP Org,playerId,,,
 Connor Hellebuyck,WPG,32,G,"$8,500,000",62,40,19,3,143,1794,1651,0.920,2.31,6,42,6,784,1,302,,62,8476945,,,Use the button below to reset the GP for the Goalie Projections
 Andrei Vasilevskiy,TBL,31,G,"$9,500,000",60,35,21,4,151,1730,1579,0.913,2.52,4,36,10,503,2,268,,60,8476883,,,
 Linus Ullmark,OTT,32,G,"$8,250,000",48,31,13,4,117,1426,1309,0.918,2.44,3,34,6,491,3,233,,48,8476999,,,
