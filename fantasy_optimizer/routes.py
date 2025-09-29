@@ -257,7 +257,7 @@ def api_optimizer():
         return error
 
     try:
-        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
+        LEAGUE_CATEGORIES = ['goals', 'assists', 'points', 'pp points', 'sog', 'hits', 'blk', 'w', 'so', 'svpct', 'ga']
 
         all_rosters = get_weekly_roster_data(gm, league_id, week_num)
         if "error" in all_rosters: return jsonify(all_rosters), 500
@@ -423,7 +423,7 @@ def api_free_agents():
         my_totals, my_daily_lineups, _ = calculate_optimized_totals(my_roster, week_num, schedules, week_dates)
         opponent_totals, _, _ = calculate_optimized_totals(opponent_roster, week_num, schedules, week_dates)
 
-        LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
+        LEAGUE_CATEGORIES = ['goals', 'assists', 'points', 'pp points', 'sog', 'hits', 'blk', 'w', 'so', 'svpct', 'ga']
         category_weights = {}
         for stat in LEAGUE_CATEGORIES:
             my_stat, opp_stat = my_totals.get(stat, 0), opponent_totals.get(stat, 0)
