@@ -121,39 +121,109 @@ def calculate_per_game_stats(row, gp_index, stat_indices):
                 row[i] = 0.0
     return row
 
+def calculate_and_add_category_ranks(player_data):
+    """
+    Calculates category ranks for specified stats based on percentile and adds them to player data.
+
+    Args:
+        player_data (dict): Dictionary of player data, keyed by normalized name.
+
+    Returns:
+        tuple: A tuple containing:
+            - dict: The updated player_data dictionary.
+            - list: A list of the new column names created for the ranks.
+    """
+    new_rank_columns = []
+
+    # --- Skater Ranking ---
+    skater_stats_to_rank = [
+        'g', 'a', 'pts', 'ppg', 'ppa', 'ppp', 'shg', 'sha', 'shp',
+        'hit', 'blk', 'pim', 'fow', 'sog', 'plus_minus'
+    ]
+    skaters = {name: data for name, data in player_data.items() if 'G' not in data.get('positions', '')}
+    num_skaters = len(skaters)
+
+    if num_skaters > 0:
+        for stat in skater_stats_to_rank:
+            new_col_name = f"{stat}_cat_rank"
+            new_rank_columns.append(new_col_name)
+
+            stat_values = []
+            for name, data in skaters.items():
+                try:
+                    value = float(data.get(stat, 0.0))
+                except (ValueError, TypeError):
+                    value = 0.0
+                stat_values.append((name, value))
+
+            stat_values.sort(key=lambda x: x[1], reverse=True)
+
+            for i, (name, value) in enumerate(stat_values):
+                percentile = (i + 1) / num_skaters
+                rank_points = 0
+                if percentile <= 0.05: rank_points = 1
+                elif percentile <= 0.10: rank_points = 2
+                elif percentile <= 0.15: rank_points = 3
+                elif percentile <= 0.20: rank_points = 4
+                elif percentile <= 0.25: rank_points = 5
+                elif percentile <= 0.30: rank_points = 6
+                elif percentile <= 0.35: rank_points = 7
+                elif percentile <= 0.40: rank_points = 8
+                elif percentile <= 0.45: rank_points = 9
+                elif percentile <= 0.50: rank_points = 10
+                elif percentile <= 0.75: rank_points = 15
+                else: rank_points = 20
+                player_data[name][new_col_name] = rank_points
+
+    # --- Goalie Ranking ---
+    # Dict to hold stat and a boolean for if it should be inverse ranked (lower is better)
+    goalie_stats_to_rank = {
+        'gs': False, 'w': False, 'l': True, 'ga': True, 'sa': False,
+        'sv': False, 'svpct': False, 'gaa': True, 'so': False, 'qs': False
+    }
+    goalies = {name: data for name, data in player_data.items() if 'G' in data.get('positions', '')}
+    num_goalies = len(goalies)
+
+    if num_goalies > 0:
+        for stat, is_inverse in goalie_stats_to_rank.items():
+            new_col_name = f"{stat}_cat_rank"
+            new_rank_columns.append(new_col_name)
+
+            stat_values = []
+            for name, data in goalies.items():
+                try:
+                    value = float(data.get(stat, 0.0))
+                except (ValueError, TypeError):
+                    value = 0.0
+                stat_values.append((name, value))
+
+            # Sort normally for standard stats, reverse the sort for inverse stats
+            stat_values.sort(key=lambda x: x[1], reverse=not is_inverse)
+
+            for i, (name, value) in enumerate(stat_values):
+                percentile = (i + 1) / num_goalies
+                rank_points = 0
+                if percentile <= 0.05: rank_points = 1
+                elif percentile <= 0.10: rank_points = 2
+                elif percentile <= 0.15: rank_points = 3
+                elif percentile <= 0.20: rank_points = 4
+                elif percentile <= 0.25: rank_points = 5
+                elif percentile <= 0.30: rank_points = 6
+                elif percentile <= 0.35: rank_points = 7
+                elif percentile <= 0.40: rank_points = 8
+                elif percentile <= 0.45: rank_points = 9
+                elif percentile <= 0.50: rank_points = 10
+                elif percentile <= 0.75: rank_points = 15
+                else: rank_points = 20
+                player_data[name][new_col_name] = rank_points
+
+    return player_data, new_rank_columns
+
 def setup_projections_table(cursor):
-    """Creates and populates the 'projections' table from both skater and goalie CSV files."""
+    """Creates and populates the 'projections' table from CSV files, including category ranks."""
     print("--- Setting up Projections Table ---")
     try:
-        # Part 1: Define schema from both files and create table
-        def get_header_from_file(file_path):
-            with open(file_path, 'r', encoding='utf-8-sig') as f:
-                return next(csv.reader(f))
-
-        skater_header_raw = get_header_from_file(SKATER_CSV_FILE)
-        goalie_header_raw = get_header_from_file(GOALIE_CSV_FILE)
-
-        sanitized_skater_headers = sanitize_header(skater_header_raw)
-        sanitized_goalie_headers = sanitize_header(goalie_header_raw)
-
-        all_headers = list(dict.fromkeys(sanitized_skater_headers + sanitized_goalie_headers))
-        final_headers = [h for h in all_headers if h]
-
-        if 'player_name' not in final_headers: raise ValueError("'player_name' column not found.")
-
-        columns_def_parts = [f'"{c}" REAL' for c in final_headers if c not in ['player_name', 'positions']]
-        columns_def_parts.insert(0, 'player_name TEXT PRIMARY KEY')
-        columns_def_parts.insert(1, 'positions TEXT')
-        columns_def_parts.append('normalized_name TEXT')
-
-        create_table_sql = f'CREATE TABLE projections ({", ".join(columns_def_parts)})'
-        create_index_sql = 'CREATE INDEX idx_normalized_name ON projections(normalized_name)'
-        cursor.execute("DROP TABLE IF EXISTS projections")
-        cursor.execute(create_table_sql)
-        cursor.execute(create_index_sql)
-        print("Table 'projections' and index created with a unified schema.")
-
-        # Part 2: Process data in memory from both files
+        # Part 1: Process all player data into memory first
         player_data = {}
 
         # Process Skaters from projections.csv
@@ -170,16 +240,8 @@ def setup_projections_table(cursor):
             except ValueError as e:
                 raise ValueError(f"Missing column in {SKATER_CSV_FILE}: {e}")
 
-            skater_stats_to_exclude = [
-                'player name', 'age', 'positions', 'team', 'salary', 'gp org', 'gp',
-                'toi org es', 'toi org pp', 'toi org pk', 'toi es', 'toi pp', 'toi pk', 'total toi',
-                'rank', 'playerid', 'fantasy team'
-            ]
-            skater_stat_indices = [
-                i for i, h in enumerate(header_lower)
-                if h not in skater_stats_to_exclude and h.strip() != ''
-            ]
-
+            skater_stats_to_exclude = ['player name', 'age', 'positions', 'team', 'salary', 'gp org', 'gp', 'toi org es', 'toi org pp', 'toi org pk', 'toi es', 'toi pp', 'toi pk', 'total toi', 'rank', 'playerid', 'fantasy team']
+            skater_stat_indices = [i for i, h in enumerate(header_lower) if h not in skater_stats_to_exclude and h.strip() != '']
 
             for row in reader:
                 if not row or (pos_idx < len(row) and 'G' in row[pos_idx]): continue
@@ -193,7 +255,6 @@ def setup_projections_table(cursor):
                 if team_abbr in TEAM_TRICODE_MAP:
                     data_dict['team'] = TEAM_TRICODE_MAP[team_abbr]
                 player_data[normalized] = data_dict
-
                 player_data[normalized]['normalized_name'] = normalized
 
         # Process Goalies from gprojections.csv, updating or adding to the player_data dict
@@ -205,18 +266,12 @@ def setup_projections_table(cursor):
 
             try:
                 p_name_idx = header_lower.index('player name')
-                gp_goalie_idx = header_lower.index('gs')  # Assuming 'GS' for games started
+                gp_goalie_idx = header_lower.index('gs')
             except ValueError as e:
                 raise ValueError(f"Missing column in {GOALIE_CSV_FILE}: {e}")
 
-            goalie_stats_to_exclude = [
-                'player name', 'team', 'age', 'position', 'salary', 'ga', 'gs', 'sv%', 'gaa',
-                'rank', 'playerid', 'fantasy team'
-            ]
-            goalie_stat_indices = [
-                i for i, h in enumerate(header_lower)
-                if h not in goalie_stats_to_exclude and h.strip() != ''
-            ]
+            goalie_stats_to_exclude = ['player name', 'team', 'age', 'position', 'salary', 'ga', 'gs', 'sv%', 'gaa', 'rank', 'playerid', 'fantasy team']
+            goalie_stat_indices = [i for i, h in enumerate(header_lower) if h not in goalie_stats_to_exclude and h.strip() != '']
 
             for row in reader:
                 if not row: continue
@@ -229,7 +284,6 @@ def setup_projections_table(cursor):
                 team_abbr = goalie_row_data.get('team', '').upper()
                 if team_abbr in TEAM_TRICODE_MAP:
                     goalie_row_data['team'] = TEAM_TRICODE_MAP[team_abbr]
-
                 if 'positions' not in goalie_row_data or not goalie_row_data['positions']:
                     goalie_row_data['positions'] = 'G'
 
@@ -241,7 +295,41 @@ def setup_projections_table(cursor):
 
         print(f"Processed data for {len(player_data)} unique players from both files.")
 
-        # Part 3: Insert combined data into the database
+        # Part 2: Calculate and add category ranks to the in-memory data
+        print("Calculating category ranks...")
+        player_data, new_rank_columns = calculate_and_add_category_ranks(player_data)
+        print(f"Added {len(new_rank_columns)} category rank columns.")
+
+        # Part 3: Define schema from all headers (original + new) and create the table
+        def get_header_from_file(file_path):
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                return next(csv.reader(f))
+
+        skater_header_raw = get_header_from_file(SKATER_CSV_FILE)
+        goalie_header_raw = get_header_from_file(GOALIE_CSV_FILE)
+
+        sanitized_skater_headers = sanitize_header(skater_header_raw)
+        sanitized_goalie_headers = sanitize_header(goalie_header_raw)
+
+        all_headers = list(dict.fromkeys(sanitized_skater_headers + sanitized_goalie_headers))
+        final_headers = [h for h in all_headers if h]
+        final_headers.extend(new_rank_columns)  # Add new rank columns to the final list of headers
+
+        if 'player_name' not in final_headers: raise ValueError("'player_name' column not found.")
+
+        columns_def_parts = [f'"{c}" REAL' for c in final_headers if c not in ['player_name', 'positions']]
+        columns_def_parts.insert(0, 'player_name TEXT PRIMARY KEY')
+        columns_def_parts.insert(1, 'positions TEXT')
+        columns_def_parts.append('normalized_name TEXT')
+
+        create_table_sql = f'CREATE TABLE projections ({", ".join(columns_def_parts)})'
+        create_index_sql = 'CREATE INDEX idx_normalized_name ON projections(normalized_name)'
+        cursor.execute("DROP TABLE IF EXISTS projections")
+        cursor.execute(create_table_sql)
+        cursor.execute(create_index_sql)
+        print("Table 'projections' and index created with a unified schema including category ranks.")
+
+        # Part 4: Insert the combined and augmented data into the database
         insert_headers = final_headers + ['normalized_name']
         placeholders = ", ".join(['?'] * len(insert_headers))
         insert_sql = f'INSERT OR REPLACE INTO projections ({", ".join(f"`{h}`" for h in insert_headers)}) VALUES ({placeholders})'
