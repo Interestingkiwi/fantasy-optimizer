@@ -271,6 +271,33 @@ export function createOptimizerContextSection(title, context) {
     return div;
 }
 
+/**
+ * Formats a comma-separated string of day abbreviations to bold any back-to-back days.
+ * @param {string} dayString - e.g., "Mon, Tue, Fri"
+ * @returns {string} HTML string with <b> tags, e.g., "<b>Mon</b>, <b>Tue</b>, Fri"
+ */
+function formatBackToBackDays(dayString) {
+    if (!dayString) return '';
+    const days = dayString.split(', ');
+    if (days.length < 2) return dayString;
+
+    const dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // Create a set for quick lookups
+    const daySet = new Set(days);
+
+    const formattedDays = days.map(day => {
+        const dayIndex = dayOrder.indexOf(day);
+        const prevDay = dayIndex > 0 ? dayOrder[dayIndex - 1] : null;
+        const nextDay = dayIndex < 6 ? dayOrder[dayIndex + 1] : null;
+
+        const isB2B = (prevDay && daySet.has(prevDay)) || (nextDay && daySet.has(nextDay));
+
+        return isB2B ? `<b>${day}</b>` : day;
+    });
+
+    return formattedDays.join(', ');
+}
+
 export function createFreeAgentTable(freeAgents, weights) {
     const table = document.createElement('table');
     const statsForHeatmap = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk'];
@@ -280,11 +307,11 @@ export function createFreeAgentTable(freeAgents, weights) {
         const style = weight >= 2.0 ? 'style="background-color: #ffeeba;"' : '';
         return `<th ${style}>${stat.toUpperCase()}</th>`;
     }).join('');
-    table.innerHTML = `<thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Positions</th><th>Games</th><th>Cat Coverage Rank</th>${headerStats}<th>Start Days</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Positions</th><th>Games</th><th>Total Rank</th>${headerStats}<th>Start Days</th><th>Next Week Starts</th></tr></thead>`;
 
     const tbody = document.createElement('tbody');
     if (freeAgents.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${8 + STATS_TO_DISPLAY_H2H.length}">No valuable free agents found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${9 + STATS_TO_DISPLAY_H2H.length}">No valuable free agents found.</td></tr>`;
     } else {
         freeAgents.forEach(fa => {
             const ranksToSum = ['g_cat_rank', 'a_cat_rank', 'pts_cat_rank', 'ppp_cat_rank', 'hit_cat_rank', 'blk_cat_rank', 'sog_cat_rank'];
@@ -306,6 +333,10 @@ export function createFreeAgentTable(freeAgents, weights) {
                 const value = fa.weekly_projections[stat] !== undefined ? fa.weekly_projections[stat] : 0;
                 return `<td ${colorStyle}>${value}</td>`;
             }).join('');
+
+            const formattedStartDays = formatBackToBackDays(fa.start_days);
+            const formattedNextWeekStarts = formatBackToBackDays(fa.next_week_starts);
+
             tbody.innerHTML += `
                 <tr>
                     <td>${fa.name}</td>
@@ -315,7 +346,8 @@ export function createFreeAgentTable(freeAgents, weights) {
                     <td>${fa.games_this_week}</td>
                     <td><b>${totalRank}</b></td>
                     ${statCells}
-                    <td>${fa.start_days}</td>
+                    <td>${formattedStartDays}</td>
+                    <td>${formattedNextWeekStarts}</td>
                 </tr>`;
         });
     }
