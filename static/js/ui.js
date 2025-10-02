@@ -10,6 +10,23 @@ const STATS_TO_DISPLAY_H2H = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 
 const FANTASY_WEEKS = 25;
 const MAX_TRANSACTIONS = 4;
 
+// --- Helper for Heatmap ---
+/**
+ * Generates an HSL color string for a heatmap based on a player's category rank.
+ * @param {number} rank - The player's rank in a category (1-20).
+ * @returns {string} An inline style string with a background color.
+ */
+function getRankColor(rank) {
+    if (rank === null || rank === undefined || rank < 1 || rank > 20) {
+        return ''; // No color for invalid ranks
+    }
+    // Hue goes from 120 (green) for rank 1 down to 0 (red) for rank 20.
+    const hue = 120 - ((rank - 1) * (120 / 19));
+    // Use a high lightness to keep it pastel and readable, with moderate saturation.
+    return `style="background-color: hsl(${hue}, 70%, 85%); color: #333;"`;
+}
+
+
 // --- UI State Functions ---
 export function showLoginView() {
     document.getElementById('login-container').classList.remove('hidden');
@@ -256,19 +273,39 @@ export function createOptimizerContextSection(title, context) {
 
 export function createFreeAgentTable(freeAgents, weights) {
     const table = document.createElement('table');
+    const statsForHeatmap = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk'];
+
     const headerStats = STATS_TO_DISPLAY_H2H.map(stat => {
         const weight = weights[stat] || 0;
         const style = weight >= 2.0 ? 'style="background-color: #ffeeba;"' : '';
         return `<th ${style}>${stat.toUpperCase()}</th>`;
     }).join('');
-    table.innerHTML = `<thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Positions</th><th>Games</th>${headerStats}<th>Start Days</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Positions</th><th>Games</th><th>Cat Coverage Rank</th>${headerStats}<th>Start Days</th></tr></thead>`;
 
     const tbody = document.createElement('tbody');
     if (freeAgents.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${6 + STATS_TO_DISPLAY_H2H.length}">No valuable free agents found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${8 + STATS_TO_DISPLAY_H2H.length}">No valuable free agents found.</td></tr>`;
     } else {
         freeAgents.forEach(fa => {
-            const statCells = STATS_TO_DISPLAY_H2H.map(stat => `<td>${fa.weekly_projections[stat] || 0}</td>`).join('');
+            const ranksToSum = ['g_cat_rank', 'a_cat_rank', 'pts_cat_rank', 'ppp_cat_rank', 'hit_cat_rank', 'blk_cat_rank', 'sog_cat_rank'];
+            let totalRank = 0;
+            if (fa.per_game_projections) {
+                ranksToSum.forEach(rankStatName => {
+                    totalRank += fa.per_game_projections[rankStatName] || 0;
+                });
+            }
+
+            const statCells = STATS_TO_DISPLAY_H2H.map(stat => {
+                let colorStyle = '';
+                if (statsForHeatmap.includes(stat)) {
+                    const rankStatName = `${stat}_cat_rank`;
+                    // The rank data is in per_game_projections, not weekly_projections
+                    const rank = fa.per_game_projections ? fa.per_game_projections[rankStatName] : null;
+                    colorStyle = getRankColor(rank);
+                }
+                const value = fa.weekly_projections[stat] !== undefined ? fa.weekly_projections[stat] : 0;
+                return `<td ${colorStyle}>${value}</td>`;
+            }).join('');
             tbody.innerHTML += `
                 <tr>
                     <td>${fa.name}</td>
@@ -276,6 +313,7 @@ export function createFreeAgentTable(freeAgents, weights) {
                     <td>${fa.availability || 'FA'}</td>
                     <td>${fa.positions}</td>
                     <td>${fa.games_this_week}</td>
+                    <td><b>${totalRank}</b></td>
                     ${statCells}
                     <td>${fa.start_days}</td>
                 </tr>`;
@@ -284,6 +322,7 @@ export function createFreeAgentTable(freeAgents, weights) {
     table.appendChild(tbody);
     return table;
 }
+
 
 export function createFreeAgentPagination(startIndex, resultCount, onPageChange) {
     const div = document.createElement('div');
