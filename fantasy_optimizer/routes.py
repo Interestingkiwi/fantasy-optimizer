@@ -10,7 +10,8 @@ import re
 import unicodedata
 import os
 from datetime import date, timedelta, datetime
-from flask import Blueprint, jsonify, request, send_from_directory, session
+from flask import Blueprint, jsonify, request, send_from_directory, session, url_for
+import requests
 from yahoo_fantasy_api import game
 from . import config
 from .auth import get_oauth_client
@@ -42,17 +43,40 @@ def check_auth_and_get_game():
 
     # Refresh if less than 5 minutes remain
     if time.time() > token_time + expires_in - 300:
-        print("Token expired or nearing expiration, attempting to refresh...")
+        print("Token expired or nearing expiration, attempting to refresh manually...")
         try:
-            # Create the client with the expired token data to access the refresh method
-            oauth = get_oauth_client(token_data)
-            oauth.refresh_access_token()
-            # The library updates its internal token_data upon refresh
-            session['yahoo_token_data'] = oauth.token_data
-            token_data = oauth.token_data
-            print("Successfully refreshed access token and updated session.")
+            with open(config.YAHOO_CREDENTIALS_FILE) as f:
+                creds = json.load(f)
+
+            redirect_uri = url_for('auth.callback', _external=True)
+            if '127.0.0.1' not in redirect_uri and 'localhost' not in redirect_uri:
+                redirect_uri = redirect_uri.replace('http://', 'https')
+
+            payload = {
+                'refresh_token': token_data['refresh_token'],
+                'client_id': creds['consumer_key'],
+                'client_secret': creds['consumer_secret'],
+                'redirect_uri': redirect_uri,
+                'grant_type': 'refresh_token'
+            }
+
+            token_url = 'https://api.login.yahoo.com/oauth2/get_token'
+            response = requests.post(token_url, data=payload)
+            response.raise_for_status()
+
+            new_token_data = response.json()
+            new_token_data['token_time'] = time.time()
+
+            # A new refresh token is not always provided. Carry over the old one if needed.
+            if 'refresh_token' not in new_token_data:
+                new_token_data['refresh_token'] = token_data['refresh_token']
+
+            session['yahoo_token_data'] = new_token_data
+            token_data = new_token_data
+            print("Successfully refreshed access token manually.")
+
         except Exception as e:
-            print(f"Failed to refresh access token: {e}")
+            print(f"Failed to refresh access token manually: {e}")
             session.clear()
             return None, (jsonify({"error": "Failed to refresh token, please log in again."}), 401)
 
@@ -90,7 +114,7 @@ def api_cache_league_data():
     """
     league_id = request.args.get('league_id', type=str)
     week_num = request.args.get('week', type=int)
-    user_guid = session.get('yahoo_token_data', {}).get('guid')
+    user_guid = session.get('yahoo_token_data', {}).get('xoauth_yahoo_guid')
 
     if not all([week_num, league_id, user_guid]):
         return jsonify({"error": "Missing parameters or not authenticated"}), 400
