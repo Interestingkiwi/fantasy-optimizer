@@ -12,7 +12,9 @@ def create_app():
     """
     Application factory function. Creates and configures the Flask app.
     """
-    app = Flask(__name__, static_folder='../static')
+    # Define a more robust, absolute path for the static folder
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static')
+    app = Flask(__name__, static_folder=static_dir)
 
     # IMPORTANT: Add ProxyFix middleware here.
     # This tells the app to trust the headers from the proxy server (like Render, Heroku, etc.)
