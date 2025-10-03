@@ -2,7 +2,6 @@
 This module contains helper functions for fetching and processing data
 from the database and the Yahoo Fantasy API. It keeps the route handlers
 in routes.py cleaner and focused on request/response logic.
-Updated: 10/3/2025
 """
 import sqlite3
 import json
@@ -174,8 +173,7 @@ def get_weekly_roster_data(gm, league_id, week_num):
                     "status": player.get('status', 'OK'),
                     "games_this_week": num_games,
                     "weekly_projections": weekly_projections,
-                    "per_game_projections": player_projections,
-                    "availability": team_name # Default to team name, will be overwritten for FAs
+                    "per_game_projections": player_projections
                 }
                 roster_data.append(player_data)
 
@@ -285,9 +283,7 @@ def get_live_stats_for_team(lg, team_name, week_num):
             print(f"Warning: Team key not found for team name '{team_name}'")
             return {}
 
-        # Get team object and then get matchup
-        team = lg.to_team(team_key)
-        matchup_data = team.matchup(week=week_num)
+        matchup_data = lg.matchup(team_key, week=week_num)
 
         # The matchup data is directly the stats for that team in that week
         if matchup_data:
@@ -341,84 +337,3 @@ def get_healthy_free_agents(lg):
 
     print(f"Found {len(healthy_available_players)} healthy available players.")
     return healthy_available_players
-
-def enrich_fa_list_with_projections(fa_list, week_num):
-    """
-    Takes a list of raw player dicts from the Yahoo API, finds their projections
-    in the local DB, and returns an enriched list.
-    """
-    enriched_list = []
-    con = sqlite3.connect(config.DB_FILE)
-    con.row_factory = sqlite3.Row
-    cur = con.cursor()
-
-    # --- Pre-fetch all player names from DB for fuzzy matching ---
-    cur.execute("SELECT player_name, normalized_name FROM projections")
-    db_players = cur.fetchall()
-    db_player_choices = {p['normalized_name']: p['player_name'] for p in db_players}
-
-    cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
-    week_info = cur.fetchone()
-    week_start_date = datetime.fromisoformat(week_info['start_date']).date()
-    week_end_date = datetime.fromisoformat(week_info['end_date']).date()
-
-    cur.execute("SELECT team_tricode, schedule_json FROM team_schedules")
-    schedules = {row['team_tricode']: json.loads(row['schedule_json']) for row in cur.fetchall()}
-
-    for fa in fa_list:
-        try:
-            normalized_fa_name = normalize_name(fa['name'])
-            # Handle name duplicates
-            if normalized_fa_name in ['sebastianaho', 'eliaspettersson']:
-                is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in fa['eligible_positions'])
-                is_defense = 'D' in fa['eligible_positions']
-                if is_forward and not is_defense:
-                    normalized_fa_name = f"{normalized_fa_name}f"
-                elif is_defense and not is_forward:
-                    normalized_fa_name = f"{normalized_fa_name}d"
-
-            cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_fa_name,))
-            fa_proj_row = cur.fetchone()
-
-            if not fa_proj_row:
-                best_match_normalized = find_best_match(fa['name'], db_player_choices)
-                if best_match_normalized:
-                    cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (best_match_normalized,))
-                    fa_proj_row = cur.fetchone()
-
-            if not fa_proj_row:
-                continue
-
-            fa_proj = dict(fa_proj_row)
-            fa_team = fa_proj.get('team', 'N/A').upper()
-            fa_schedule = schedules.get(fa_team, [])
-            games_this_week = sum(1 for d_str in fa_schedule if week_start_date <= date.fromisoformat(d_str) <= week_end_date)
-
-            weekly_projections = {}
-            for stat, value in fa_proj.items():
-                if stat not in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age'] and value is not None:
-                    try:
-                        if stat in ['gaa', 'svpct']:
-                            weekly_projections[stat] = float(value)
-                        else:
-                            weekly_projections[stat] = round(float(value) * games_this_week, 2)
-                    except (ValueError, TypeError):
-                        continue
-
-            fa_data = {
-                "name": fa['name'],
-                "positions": ', '.join(fa['eligible_positions']),
-                "team": fa_team,
-                "per_game_projections": fa_proj,
-                "games_this_week": games_this_week,
-                "weekly_projections": weekly_projections,
-                "availability": fa.get('availability', 'FA')
-            }
-            enriched_list.append(fa_data)
-
-        except Exception as e:
-            print(f"Error enriching FA {fa.get('name')}: {e}")
-            continue
-
-    con.close()
-    return enriched_list

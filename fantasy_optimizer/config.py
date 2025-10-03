@@ -1,7 +1,6 @@
 """
 Configuration settings for the Fantasy Hockey Matchup Optimizer application.
 This file centralizes all the configuration variables.
-Updated: 10/3/2025
 """
 import os
 

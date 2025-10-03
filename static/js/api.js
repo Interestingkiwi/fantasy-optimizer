@@ -13,7 +13,7 @@ export const API_BASE_URL = HOSTING_ENVIRONMENT === 'localhost' ? 'http://127.0.
 async function handleResponse(response) {
     if (response.status === 401) {
         // Handle unauthorized responses by reloading the page to trigger login.
-        alert("Your session has expired, please log in again.");
+        alert("Your session has expired. Please log in again.");
         window.location.reload();
         // Throw an error to stop the current promise chain
         throw new Error("Unauthorized");
@@ -58,13 +58,6 @@ export async function logout() {
     await fetch(`${API_BASE_URL}/api/auth/logout`);
 }
 
-// --- Caching and Data Loading ---
-export async function cacheLeagueData(leagueId, week) {
-    const params = new URLSearchParams({ league_id: leagueId, week });
-    const response = await fetch(`${API_BASE_URL}/api/cache-league-data?${params}`);
-    return handleResponse(response);
-}
-
 // --- Exported API Functions ---
 export async function fetchLeagues() {
     const response = await fetch(`${API_BASE_URL}/api/leagues`);
@@ -72,7 +65,6 @@ export async function fetchLeagues() {
 }
 
 export async function fetchRosters(leagueId, week) {
-    // This will now pull from the cache on the backend if available
     const params = new URLSearchParams({ league_id: leagueId });
     const response = await fetch(`${API_BASE_URL}/api/rosters/week/${week}?${params}`);
     return handleResponse(response);

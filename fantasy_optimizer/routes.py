@@ -2,32 +2,22 @@
 This module contains all the Flask routes (API endpoints) for the application.
 It uses a Flask Blueprint to keep the routes organized and separate from the main
 application initialization logic.
-Updated: 10/3/2025
 """
 import sqlite3
 import json
 import time
 import re
 import unicodedata
-import os
 from datetime import date, timedelta, datetime
-from flask import Blueprint, jsonify, request, send_from_directory, session, url_for
-import requests
+from flask import Blueprint, jsonify, request, send_from_directory, session
 from yahoo_fantasy_api import game
 from . import config
 from .auth import get_oauth_client
-from .data_helpers import (
-    get_user_leagues, get_weekly_roster_data, calculate_optimized_totals,
-    get_live_stats_for_team, normalize_name, get_healthy_free_agents,
-    enrich_fa_list_with_projections
-)
+from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, normalize_name, get_healthy_free_agents
 from .optimization_logic import find_optimal_lineup
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
 api_bp = Blueprint('api', __name__)
-
-# Server-side cache to avoid large session cookies
-LEAGUE_DATA_CACHE = {}
 
 def check_auth_and_get_game():
     """
@@ -44,45 +34,17 @@ def check_auth_and_get_game():
 
     # Refresh if less than 5 minutes remain
     if time.time() > token_time + expires_in - 300:
-        print("Token expired or nearing expiration, attempting to refresh manually...")
+        print("Token expired or nearing expiration, attempting to refresh...")
         try:
-            with open(config.YAHOO_CREDENTIALS_FILE) as f:
-                creds = json.load(f)
-
-            redirect_uri = url_for('auth.callback', _external=True)
-            if '127.0.0.1' not in redirect_uri and 'localhost' not in redirect_uri:
-                redirect_uri = redirect_uri.replace('http://', 'https')
-
-            payload = {
-                'refresh_token': token_data['refresh_token'],
-                'client_id': creds['consumer_key'],
-                'client_secret': creds['consumer_secret'],
-                'redirect_uri': redirect_uri,
-                'grant_type': 'refresh_token'
-            }
-
-            token_url = '[https://api.login.yahoo.com/oauth2/get_token](https://api.login.yahoo.com/oauth2/get_token)'
-            response = requests.post(token_url, data=payload)
-            response.raise_for_status()
-
-            new_token_data_from_refresh = response.json()
-
-            # Update the existing token_data, don't replace it entirely.
-            # This preserves the original xoauth_yahoo_guid.
-            token_data['access_token'] = new_token_data_from_refresh['access_token']
-            token_data['expires_in'] = new_token_data_from_refresh['expires_in']
-            token_data['token_time'] = time.time()
-
-            # If a new refresh token is provided, update that too.
-            if 'refresh_token' in new_token_data_from_refresh:
-                token_data['refresh_token'] = new_token_data_from_refresh['refresh_token']
-
-            session['yahoo_token_data'] = token_data
-
-            print("Successfully refreshed access token manually.")
-
+            # Create the client with the expired token data to access the refresh method
+            oauth = get_oauth_client(token_data)
+            oauth.refresh_access_token()
+            # The library updates its internal token_data upon refresh
+            session['yahoo_token_data'] = oauth.token_data
+            token_data = oauth.token_data
+            print("Successfully refreshed access token and updated session.")
         except Exception as e:
-            print(f"Failed to refresh access token manually: {e}")
+            print(f"Failed to refresh access token: {e}")
             session.clear()
             return None, (jsonify({"error": "Failed to refresh token, please log in again."}), 401)
 
@@ -98,82 +60,15 @@ def index():
     Serves the main index.html file from the project's root directory.
     We go 'up' one level from the current blueprint's directory.
     """
-    # Use a more robust path to find the html file
-    root_dir = os.path.join(os.path.dirname(__file__), '..')
-    return send_from_directory(root_dir, 'index.html')
+    return send_from_directory('..', 'index.html')
 
 @api_bp.route('/players.html')
 def players_page():
     """Serves the new players.html file."""
-    # Use a more robust path to find the html file
-    root_dir = os.path.join(os.path.dirname(__file__), '..')
-    return send_from_directory(root_dir, 'players.html')
+    return send_from_directory('..', 'players.html')
 
 
 # --- API Routes ---
-
-@api_bp.route("/api/cache-league-data")
-def api_cache_league_data():
-    """
-    Fetches all necessary data for a league (rosters, FAs, live stats) from Yahoo,
-    enriches it, and caches it in the server's memory.
-    """
-    league_id = request.args.get('league_id', type=str)
-    week_num = request.args.get('week', type=int)
-    # FIX: The key for the user GUID from yahoo-oauth is 'xoauth_yahoo_guid', not 'guid'
-    user_guid = session.get('yahoo_token_data', {}).get('xoauth_yahoo_guid')
-
-    if not all([week_num, league_id, user_guid]):
-        return jsonify({"error": "Missing parameters or not authenticated"}), 400
-
-    gm, error = check_auth_and_get_game()
-    if error: return error
-
-    try:
-        cache_key = f"{user_guid}_{league_id}_{week_num}"
-
-        print(f"Caching data for league {league_id}, week {week_num} with key {cache_key}...")
-        lg = gm.to_league(league_id)
-
-        # 1. Fetch all rosters (already projection-enriched)
-        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
-        if "error" in all_rosters:
-            return jsonify(all_rosters), 500
-
-        # 2. Fetch available players from Yahoo
-        available_players_raw = get_healthy_free_agents(lg)
-
-        # 3. Enrich available players with projections from local DB
-        enriched_available_players = enrich_fa_list_with_projections(available_players_raw, week_num)
-
-        # 4. Fetch all live matchups for the week
-        all_teams_data = lg.teams()
-        live_stats_by_team = {}
-        for team_key, team_info in all_teams_data.items():
-            team_name = team_info['name']
-            live_stats_by_team[team_name] = get_live_stats_for_team(lg, team_name, week_num)
-
-        # 5. Store everything in the server-side cache
-        LEAGUE_DATA_CACHE[cache_key] = {
-            'rosters': all_rosters,
-            'available_players': enriched_available_players,
-            'live_stats': live_stats_by_team,
-            'timestamp': time.time()
-        }
-
-        # Store only the key and identifiers in the session cookie
-        session['cache_key'] = cache_key
-        session['league_id'] = league_id
-        session['week_num'] = week_num
-        session.permanent = True
-
-        print("Data successfully cached.")
-        return jsonify(list(all_rosters.keys()))
-
-    except Exception as e:
-        print(f"An unexpected error in /api/cache-league-data: {e}")
-        return jsonify({"error": "An unexpected server error occurred."}), 500
-
 
 @api_bp.route("/api/leagues")
 def api_get_user_leagues():
@@ -191,70 +86,142 @@ def api_get_user_leagues():
 
 @api_bp.route("/api/rosters/week/<int:week_num>")
 def api_get_rosters_for_week(week_num):
-    """API endpoint to get raw roster data, using the server-side cache if available."""
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
-
-    # Check if the requested week and league match what the key represents
+    """API endpoint to get raw roster data for a specific week and league."""
     league_id = request.args.get('league_id', type=str)
-    session_league_id = session.get('league_id')
-    session_week_num = session.get('week_num')
 
+    if not week_num or not league_id:
+        return jsonify({"error": "Missing week or league_id parameter"}), 400
 
-    if cached_data and session_league_id == league_id and session_week_num == week_num:
-        print("Serving rosters from cache.")
-        return jsonify(cached_data['rosters'])
-
-    # Fallback to live fetch if cache is invalid or missing
-    print(f"Cache miss for rosters. Fetching live for league {league_id}, week {week_num}.")
     gm, error = check_auth_and_get_game()
-    if error: return error
-    rosters = get_weekly_roster_data(gm, league_id, week_num)
-    if "error" in rosters: return jsonify(rosters), 500
-    return jsonify(rosters)
+    if error:
+        return error
 
+    print(f"API endpoint hit for week {week_num}, league {league_id}. Fetching data...")
+    try:
+        rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in rosters:
+            return jsonify(rosters), 500
+        return jsonify(rosters)
+    except Exception as e:
+        print(f"Error in /api/rosters: {e}")
+        return jsonify({"error": "An unexpected server error occurred."}), 500
 
 @api_bp.route("/api/all-players")
 def api_get_all_players():
     """
-    API endpoint to get a team's roster and all available players (FA/W),
-    pulling from the pre-loaded server-side cache.
+    API endpoint to get a team's roster and all available players (FA/W)
+    for a given league and week, enriched with projection data.
     """
+    league_id = request.args.get('league_id', type=str)
     team_name = request.args.get('team_name', type=str)
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
+    week_num = request.args.get('week', type=int)
 
+    if not all([league_id, team_name, week_num]):
+        return jsonify({"error": "Missing required parameters"}), 400
 
-    if not cached_data:
-        return jsonify({"error": "No league data cached. Please select a league first."}), 400
-    if not team_name:
-        return jsonify({"error": "Missing team_name parameter"}), 400
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
 
-    team_roster = cached_data['rosters'].get(team_name)
-    if not team_roster:
-        return jsonify({"error": f"Team '{team_name}' not found in cached data."}), 404
+    try:
+        # 1. Get all roster data, which includes the specific team's roster
+        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in all_rosters:
+            return jsonify(all_rosters), 500
+        team_roster = all_rosters.get(team_name)
+        if not team_roster:
+            return jsonify({"error": f"Team '{team_name}' not found."}), 404
 
-    return jsonify({
-        "team_roster": team_roster,
-        "available_players": cached_data['available_players']
-    })
+        # 2. Get all available players from Yahoo
+        lg = gm.to_league(league_id)
+        available_players_raw = get_healthy_free_agents(lg)
+
+        # 3. Connect to DB to enrich player data
+        con = sqlite3.connect(config.DB_FILE)
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+
+        cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
+        week_info = cur.fetchone()
+        week_start = date.fromisoformat(week_info['start_date'])
+        week_end = date.fromisoformat(week_info['end_date'])
+
+        cur.execute("SELECT team_tricode, schedule_json FROM team_schedules")
+        schedules = {row['team_tricode']: json.loads(row['schedule_json']) for row in cur.fetchall()}
+
+        # 4. Process the raw available players list to add projections
+        processed_available_players = []
+        for player in available_players_raw:
+            normalized_name = normalize_name(player['name'])
+
+            if normalized_name in ['sebastianaho', 'eliaspettersson']:
+                is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in player['eligible_positions'])
+                is_defense = 'D' in player['eligible_positions']
+                if is_forward and not is_defense: normalized_name = f"{normalized_name}f"
+                elif is_defense and not is_forward: normalized_name = f"{normalized_name}d"
+
+            cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_name,))
+            proj_row = cur.fetchone()
+            if not proj_row:
+                continue
+
+            proj_dict = dict(proj_row)
+            team_tricode = proj_dict.get('team', 'N/A').upper()
+            schedule = schedules.get(team_tricode, [])
+            games_this_week = sum(1 for d_str in schedule if week_start <= date.fromisoformat(d_str) <= week_end)
+
+            weekly_projections = {}
+            for stat, value in proj_dict.items():
+                if isinstance(value, (int, float)):
+                    if stat in ['gaa', 'svpct']:
+                        weekly_projections[stat] = float(value)
+                    else:
+                        weekly_projections[stat] = round(float(value) * games_this_week, 2)
+
+            processed_player = {
+                "name": player['name'],
+                "team": team_tricode,
+                "availability": player.get('availability', 'FA'),
+                "positions": ', '.join(player['eligible_positions']),
+                "games_this_week": games_this_week,
+                "weekly_projections": weekly_projections,
+                "per_game_projections": proj_dict
+            }
+            processed_available_players.append(processed_player)
+
+        con.close()
+
+        return jsonify({
+            "team_roster": team_roster,
+            "available_players": processed_available_players
+        })
+
+    except Exception as e:
+        if 'con' in locals() and con:
+            con.close()
+        print(f"An unexpected error in /api/all-players: {e}")
+        return jsonify({"error": "An unexpected server error occurred."}), 500
 
 
 @api_bp.route("/api/matchup")
 def api_get_matchup():
-    """Gets matchup data from the server-side cache."""
+    week_num = request.args.get('week', type=int)
+    league_id = request.args.get('league_id', type=str)
     team1_name = request.args.get('team1', type=str)
     team2_name = request.args.get('team2', type=str)
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
-    week_num = session.get('week_num')
 
-    if not all([team1_name, team2_name, cached_data, week_num]):
-        return jsonify({"error": "Missing parameters or cached data"}), 400
+    if not all([week_num, league_id, team1_name, team2_name]):
+        return jsonify({"error": "Missing required parameters"}), 400
+
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
 
     try:
-        all_rosters = cached_data['rosters']
-        live_stats = cached_data['live_stats']
+        lg = gm.to_league(league_id)
+        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in all_rosters: return jsonify(all_rosters), 500
+
         team1_roster = all_rosters.get(team1_name)
         team2_roster = all_rosters.get(team2_name)
         if not team1_roster or not team2_roster:
@@ -273,8 +240,8 @@ def api_get_matchup():
         off_days = [row[0] for row in cur.fetchall()]
         con.close()
 
-        team1_live_stats = live_stats.get(team1_name, {})
-        team2_live_stats = live_stats.get(team2_name, {})
+        team1_live_stats = get_live_stats_for_team(lg, team1_name, week_num)
+        team2_live_stats = get_live_stats_for_team(lg, team2_name, week_num)
 
         def format_live_stats(stats):
             """Formats the raw live stats from Yahoo, rounding goalie rate stats."""
@@ -357,23 +324,28 @@ def api_get_matchup():
 @api_bp.route("/api/simulate-week", methods=['POST'])
 def api_simulate_week():
     data = request.json
+    week_num = data.get('week')
+    league_id = data.get('league_id')
     my_team_name = data.get('my_team')
     opponent_name = data.get('opponent')
     transactions = data.get('transactions', [])
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
-    week_num = session.get('week_num')
 
+    if not all([week_num, league_id, my_team_name, opponent_name]):
+        return jsonify({"error": "Missing required parameters"}), 400
 
-    if not all([my_team_name, opponent_name, week_num, cached_data]):
-        return jsonify({"error": "Missing required parameters or cached data"}), 400
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
 
     try:
-        all_rosters = cached_data['rosters']
+        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in all_rosters: return jsonify(all_rosters), 500
+
         my_roster = all_rosters.get(my_team_name)
         opponent_roster = all_rosters.get(opponent_name)
         if not my_roster or not opponent_roster:
             return jsonify({"error": "Team names not found"}), 404
+
         con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
@@ -419,18 +391,23 @@ def api_simulate_week():
 def api_optimizer():
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
+    week_num = request.args.get('week', type=int)
+    league_id = request.args.get('league_id', type=str)
     target_date_str = request.args.get('date', type=str)
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
-    week_num = session.get('week_num')
 
+    if not all([my_team_name, opponent_name, week_num, league_id, target_date_str]):
+        return jsonify({"error": "Missing required parameters"}), 400
 
-    if not all([my_team_name, opponent_name, week_num, cached_data, target_date_str]):
-        return jsonify({"error": "Missing required parameters or cached data"}), 400
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
 
     try:
         LEAGUE_CATEGORIES = ['g', 'a', 'pts', 'ppp', 'sog', 'hit', 'blk', 'w', 'so', 'svpct', 'ga']
-        all_rosters = cached_data['rosters']
+
+        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in all_rosters: return jsonify(all_rosters), 500
+
         my_roster = all_rosters.get(my_team_name)
         opponent_roster = all_rosters.get(opponent_name)
         if not my_roster or not opponent_roster:
@@ -485,15 +462,19 @@ def api_optimizer():
 @api_bp.route("/api/weekly-optimizer")
 def api_weekly_optimizer():
     team_name = request.args.get('team', type=str)
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
-    week_num = session.get('week_num')
+    week_num = request.args.get('week', type=int)
+    league_id = request.args.get('league_id', type=str)
 
-    if not all([team_name, week_num, cached_data]):
-        return jsonify({"error": "Missing parameters or cached data"}), 400
+    if not all([team_name, week_num, league_id]):
+        return jsonify({"error": "Missing parameters"}), 400
+
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
 
     try:
-        all_rosters = cached_data['rosters']
+        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in all_rosters: return jsonify(all_rosters), 500
         team_roster = all_rosters.get(team_name)
         if not team_roster: return jsonify({"error": f"Team '{team_name}' not found"}), 404
 
@@ -561,19 +542,21 @@ def api_weekly_optimizer():
 def api_free_agents():
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
+    week_num = request.args.get('week', type=int)
+    league_id = request.args.get('league_id', type=str)
     start_index = request.args.get('start', type=int, default=0)
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
-    week_num = session.get('week_num')
 
+    if not all([my_team_name, opponent_name, week_num, league_id]):
+        return jsonify({"error": "Missing required parameters"}), 400
 
-    if not all([my_team_name, opponent_name, week_num, cached_data]):
-        return jsonify({"error": "Missing required parameters or cached data"}), 400
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
 
     try:
-        all_rosters = cached_data['rosters']
-        evaluated_fas = cached_data['available_players']
-
+        lg = gm.to_league(league_id)
+        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in all_rosters: return jsonify(all_rosters), 500
         my_roster = all_rosters.get(my_team_name)
         opponent_roster = all_rosters.get(opponent_name)
         if not my_roster or not opponent_roster:
@@ -617,29 +600,63 @@ def api_free_agents():
 
         ideal_drop = min(my_player_values, key=lambda x: x['value']) if my_player_values else None
 
-        # The free agents are already enriched from the cache, we just need to calculate their value
-        for fa_data in evaluated_fas:
-            fa_data['weekly_impact_score'] = 0 # Reset score
-            fa_proj = fa_data.get('per_game_projections', {})
+        healthy_free_agents = get_healthy_free_agents(lg)
 
-            current_date = week_dates['start']
-            while current_date <= week_dates['end']:
-                date_str = current_date.isoformat()
-                if fa_data['team'] in schedules and date_str in schedules[fa_data['team']]:
-                    my_optimal_today = [p for p, pos in my_daily_lineups.get(date_str, [])]
-                    roster_with_fa = my_optimal_today + [fa_data]
-                    optimal_lineup_with_fa, _ = find_optimal_lineup(roster_with_fa, category_weights)
+        evaluated_fas = []
+        for fa in healthy_free_agents:
+            try:
+                normalized_fa_name = normalize_name(fa['name'])
+                if normalized_fa_name in ['sebastianaho', 'eliaspettersson']:
+                    is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in fa['eligible_positions'])
+                    is_defense = 'D' in fa['eligible_positions']
+                    if is_forward and not is_defense:
+                        normalized_fa_name = f"{normalized_fa_name}f"
+                    elif is_defense and not is_forward:
+                        normalized_fa_name = f"{normalized_fa_name}d"
 
-                    if any(p['name'] == fa_data['name'] for p, pos in optimal_lineup_with_fa):
-                        value = 0
-                        for stat, weight in category_weights.items():
-                            try: stat_val = float(fa_proj.get(stat, 0.0))
-                            except (ValueError, TypeError): stat_val = 0.0
-                            value += (stat_val * weight) if stat != 'ga' else -(stat_val * weight)
-                        fa_data['weekly_impact_score'] += value
-                current_date += timedelta(days=1)
+                cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_fa_name,))
+                fa_proj_row = cur.fetchone()
+                if not fa_proj_row: continue
+                fa_proj = dict(fa_proj_row)
 
-            fa_data['suggested_drop'] = ideal_drop['name'] if ideal_drop else "N/A"
+                fa_team = fa_proj.get('team', 'N/A').upper()
+                fa_schedule = schedules.get(fa_team, [])
+                games_this_week = sum(1 for d_str in fa_schedule if week_dates['start'] <= date.fromisoformat(d_str) <= week_dates['end'])
+                if games_this_week == 0: continue
+
+                fa_data = { "name": fa['name'], "positions": ', '.join(fa['eligible_positions']), "team": fa_team, "per_game_projections": fa_proj, "weekly_impact_score": 0, "games_this_week": games_this_week, "start_days": [], "weekly_projections": {}, "availability": fa.get('availability', 'FA')}
+
+                for stat, value in fa_proj.items():
+                    if stat not in ['player_name', 'team', 'positions'] and value is not None:
+                        try: fa_data['weekly_projections'][stat] = round(float(value) * games_this_week, 2)
+                        except (ValueError, TypeError): continue
+
+                current_date = week_dates['start']
+                while current_date <= week_dates['end']:
+                    date_str = current_date.isoformat()
+                    if date_str in fa_schedule:
+                        my_optimal_today = [p for p, pos in my_daily_lineups.get(date_str, [])]
+                        roster_with_fa = my_optimal_today + [fa_data]
+                        optimal_lineup_with_fa, _ = find_optimal_lineup(roster_with_fa, category_weights)
+
+                        if any(p['name'] == fa_data['name'] for p, pos in optimal_lineup_with_fa):
+                            fa_data['start_days'].append(current_date.strftime('%a'))
+                            value = 0
+                            for stat, weight in category_weights.items():
+                                try: stat_val = float(fa_proj.get(stat, 0.0))
+                                except (ValueError, TypeError): stat_val = 0.0
+                                value += (stat_val * weight) if stat != 'ga' else -(stat_val * weight)
+                            fa_data['weekly_impact_score'] += value
+                    current_date += timedelta(days=1)
+
+                if fa_data['weekly_impact_score'] > 0:
+                    fa_data['suggested_drop'] = ideal_drop['name'] if ideal_drop else "N/A"
+                    fa_data['start_days'] = ', '.join(fa_data['start_days'])
+                    evaluated_fas.append(fa_data)
+
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"Skipping FA {fa.get('name', 'Unknown')}. Error: {e}")
+                continue
 
         con.close()
 
@@ -658,15 +675,20 @@ def api_free_agents():
 @api_bp.route("/api/goalie-scenarios")
 def api_goalie_scenarios():
     team_name = request.args.get('team', type=str)
+    week_num = request.args.get('week', type=int)
+    league_id = request.args.get('league_id', type=str)
     starts = request.args.get('starts', type=int, default=1)
-    cache_key = session.get('cache_key')
-    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
 
-    if not all([team_name, cached_data]):
-        return jsonify({"error": "Missing parameters or cached data"}), 400
+    if not all([team_name, week_num, league_id]):
+        return jsonify({"error": "Missing parameters"}), 400
+
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
 
     try:
-        live_stats = cached_data['live_stats'].get(team_name, {})
+        lg = gm.to_league(league_id)
+        live_stats = get_live_stats_for_team(lg, team_name, week_num)
 
         try:
             current_ga = float(live_stats.get('ga', 0))
