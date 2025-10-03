@@ -62,6 +62,12 @@ def index():
     """
     return send_from_directory('..', 'index.html')
 
+@api_bp.route('/players.html')
+def players_page():
+    """Serves the new players.html file."""
+    return send_from_directory('..', 'players.html')
+
+
 # --- API Routes ---
 
 @api_bp.route("/api/leagues")
@@ -99,6 +105,103 @@ def api_get_rosters_for_week(week_num):
     except Exception as e:
         print(f"Error in /api/rosters: {e}")
         return jsonify({"error": "An unexpected server error occurred."}), 500
+
+@api_bp.route("/api/all-players")
+def api_get_all_players():
+    """
+    API endpoint to get a team's roster and all available players (FA/W)
+    for a given league and week, enriched with projection data.
+    """
+    league_id = request.args.get('league_id', type=str)
+    team_name = request.args.get('team_name', type=str)
+    week_num = request.args.get('week', type=int)
+
+    if not all([league_id, team_name, week_num]):
+        return jsonify({"error": "Missing required parameters"}), 400
+
+    gm, error = check_auth_and_get_game()
+    if error:
+        return error
+
+    try:
+        # 1. Get all roster data, which includes the specific team's roster
+        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
+        if "error" in all_rosters:
+            return jsonify(all_rosters), 500
+        team_roster = all_rosters.get(team_name)
+        if not team_roster:
+            return jsonify({"error": f"Team '{team_name}' not found."}), 404
+
+        # 2. Get all available players from Yahoo
+        lg = gm.to_league(league_id)
+        available_players_raw = get_healthy_free_agents(lg)
+
+        # 3. Connect to DB to enrich player data
+        con = sqlite3.connect(config.DB_FILE)
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+
+        cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
+        week_info = cur.fetchone()
+        week_start = date.fromisoformat(week_info['start_date'])
+        week_end = date.fromisoformat(week_info['end_date'])
+
+        cur.execute("SELECT team_tricode, schedule_json FROM team_schedules")
+        schedules = {row['team_tricode']: json.loads(row['schedule_json']) for row in cur.fetchall()}
+
+        # 4. Process the raw available players list to add projections
+        processed_available_players = []
+        for player in available_players_raw:
+            normalized_name = normalize_name(player['name'])
+
+            if normalized_name in ['sebastianaho', 'eliaspettersson']:
+                is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in player['eligible_positions'])
+                is_defense = 'D' in player['eligible_positions']
+                if is_forward and not is_defense: normalized_name = f"{normalized_name}f"
+                elif is_defense and not is_forward: normalized_name = f"{normalized_name}d"
+
+            cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_name,))
+            proj_row = cur.fetchone()
+            if not proj_row:
+                continue
+
+            proj_dict = dict(proj_row)
+            team_tricode = proj_dict.get('team', 'N/A').upper()
+            schedule = schedules.get(team_tricode, [])
+            games_this_week = sum(1 for d_str in schedule if week_start <= date.fromisoformat(d_str) <= week_end)
+
+            weekly_projections = {}
+            for stat, value in proj_dict.items():
+                if isinstance(value, (int, float)):
+                    if stat in ['gaa', 'svpct']:
+                        weekly_projections[stat] = float(value)
+                    else:
+                        weekly_projections[stat] = round(float(value) * games_this_week, 2)
+
+            processed_player = {
+                "name": player['name'],
+                "team": team_tricode,
+                "availability": player.get('availability', 'FA'),
+                "positions": ', '.join(player['eligible_positions']),
+                "games_this_week": games_this_week,
+                "weekly_projections": weekly_projections,
+                "per_game_projections": proj_dict
+            }
+            processed_available_players.append(processed_player)
+
+        con.close()
+
+        return jsonify({
+            "team_roster": team_roster,
+            "available_players": processed_available_players
+        })
+
+    except Exception as e:
+        if 'con' in locals() and con:
+            con.close()
+        print(f"An unexpected error in /api/all-players: {e}")
+        return jsonify({"error": "An unexpected server error occurred."}), 500
+
 
 @api_bp.route("/api/matchup")
 def api_get_matchup():
@@ -466,16 +569,6 @@ def api_free_agents():
         week_info = cur.fetchone()
         week_dates = {'start': date.fromisoformat(week_info['start_date']), 'end': date.fromisoformat(week_info['end_date'])}
 
-        # Get next week's dates for streaming potential
-        next_week_info = None
-        if week_num < 25: # Assuming 25 is the max week
-            cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num + 1,))
-            next_week_info = cur.fetchone()
-
-        next_week_dates = None
-        if next_week_info:
-            next_week_dates = {'start': date.fromisoformat(next_week_info['start_date']), 'end': date.fromisoformat(next_week_info['end_date'])}
-
         cur.execute("SELECT team_tricode, schedule_json FROM team_schedules")
         schedules = {row['team_tricode']: json.loads(row['schedule_json']) for row in cur.fetchall()}
 
@@ -531,17 +624,7 @@ def api_free_agents():
                 games_this_week = sum(1 for d_str in fa_schedule if week_dates['start'] <= date.fromisoformat(d_str) <= week_dates['end'])
                 if games_this_week == 0: continue
 
-                # Calculate next week's game days
-                next_week_starts = []
-                if next_week_dates:
-                    fa_schedule_dates = [date.fromisoformat(d_str) for d_str in fa_schedule]
-                    for d in fa_schedule_dates:
-                        if next_week_dates['start'] <= d <= next_week_dates['end']:
-                            next_week_starts.append(d.strftime('%a'))
-
-                next_week_starts_sorted = sorted(next_week_starts, key=['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].index)
-
-                fa_data = { "name": fa['name'], "positions": ', '.join(fa['eligible_positions']), "team": fa_team, "per_game_projections": fa_proj, "weekly_impact_score": 0, "games_this_week": games_this_week, "start_days": [], "weekly_projections": {}, "availability": fa.get('availability', 'FA'), "next_week_starts": ', '.join(next_week_starts_sorted)}
+                fa_data = { "name": fa['name'], "positions": ', '.join(fa['eligible_positions']), "team": fa_team, "per_game_projections": fa_proj, "weekly_impact_score": 0, "games_this_week": games_this_week, "start_days": [], "weekly_projections": {}, "availability": fa.get('availability', 'FA')}
 
                 for stat, value in fa_proj.items():
                     if stat not in ['player_name', 'team', 'positions'] and value is not None:
@@ -568,7 +651,7 @@ def api_free_agents():
 
                 if fa_data['weekly_impact_score'] > 0:
                     fa_data['suggested_drop'] = ideal_drop['name'] if ideal_drop else "N/A"
-                    fa_data['start_days'] = ', '.join(sorted(fa_data['start_days'], key=['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].index))
+                    fa_data['start_days'] = ', '.join(fa_data['start_days'])
                     evaluated_fas.append(fa_data)
 
             except (KeyError, TypeError, ValueError) as e:

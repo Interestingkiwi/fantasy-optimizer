@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const opponentSelector = document.getElementById('opponentSelector');
     const weekSelector = document.getElementById('weekSelector');
     const runAnalysisBtn = document.getElementById('runAnalysisBtn');
+    const allPlayersBtn = document.getElementById('allPlayersBtn');
     const dateSelector = document.getElementById('dateSelector');
     const optimizeBtn = document.getElementById('optimizeBtn');
     const loadRawDataBtn = document.getElementById('loadRawDataBtn');
@@ -380,6 +381,22 @@ document.addEventListener('DOMContentLoaded', () => {
     weekSelector.addEventListener('change', handleLeagueChange);
 
     runAnalysisBtn.addEventListener('click', handleRunAnalysis);
+
+    allPlayersBtn.addEventListener('click', () => {
+        const leagueId = getSelectedLeagueId();
+        const myTeam = myTeamSelector.value;
+        const week = weekSelector.value;
+
+        if (!leagueId || !myTeam) {
+            alert("Please select a league and your team first.");
+            return;
+        }
+
+        // Open players.html in a new tab with parameters
+        const url = `players.html?league_id=${leagueId}&team_name=${encodeURIComponent(myTeam)}&week=${week}`;
+        window.open(url, '_blank');
+    });
+
     optimizeBtn.addEventListener('click', handleFetchOptimalRoster);
     loadRawDataBtn.addEventListener('click', handleFetchAllRosters);
     simulateBtn.addEventListener('click', handleFetchSimulatedData);
