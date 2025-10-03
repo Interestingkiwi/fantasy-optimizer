@@ -218,21 +218,6 @@ def api_get_matchup():
             return jsonify({"error": "One or both team names not found"}), 404
 
         con = sqlite3.connect(config.DB_FILE)
-        # ... (The rest of the logic is the same, just sourced from cache)
-        # ...
-        return error
-
-    try:
-        lg = gm.to_league(league_id)
-        all_rosters = get_weekly_roster_data(gm, league_id, week_num)
-        if "error" in all_rosters: return jsonify(all_rosters), 500
-
-        team1_roster = all_rosters.get(team1_name)
-        team2_roster = all_rosters.get(team2_name)
-        if not team1_roster or not team2_roster:
-            return jsonify({"error": "One or both team names not found"}), 404
-
-        con = sqlite3.connect(config.DB_FILE)
         cur = con.cursor()
         cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
         week_info = cur.fetchone()
@@ -345,7 +330,6 @@ def api_simulate_week():
         opponent_roster = all_rosters.get(opponent_name)
         if not my_roster or not opponent_roster:
             return jsonify({"error": "Team names not found"}), 404
-
         con = sqlite3.connect(config.DB_FILE)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
