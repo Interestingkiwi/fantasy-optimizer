@@ -60,7 +60,7 @@ def check_auth_and_get_game():
                 'grant_type': 'refresh_token'
             }
 
-            token_url = 'https://api.login.yahoo.com/oauth2/get_token'
+            token_url = '[https://api.login.yahoo.com/oauth2/get_token](https://api.login.yahoo.com/oauth2/get_token)'
             response = requests.post(token_url, data=payload)
             response.raise_for_status()
 
@@ -119,8 +119,8 @@ def api_cache_league_data():
     """
     league_id = request.args.get('league_id', type=str)
     week_num = request.args.get('week', type=int)
-    # FIX: The key for the user GUID from yahoo-oauth is 'guid', not 'xoauth_yahoo_guid'
-    user_guid = session.get('yahoo_token_data', {}).get('guid')
+    # FIX: The key for the user GUID from yahoo-oauth is 'xoauth_yahoo_guid', not 'guid'
+    user_guid = session.get('yahoo_token_data', {}).get('xoauth_yahoo_guid')
 
     if not all([week_num, league_id, user_guid]):
         return jsonify({"error": "Missing parameters or not authenticated"}), 400
