@@ -24,6 +24,9 @@ from .optimization_logic import find_optimal_lineup
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
 api_bp = Blueprint('api', __name__)
 
+# Server-side cache to avoid large session cookies
+LEAGUE_DATA_CACHE = {}
+
 def check_auth_and_get_game():
     """
     Helper to check session tokens, refresh if necessary, and return an
@@ -83,24 +86,22 @@ def players_page():
 def api_cache_league_data():
     """
     Fetches all necessary data for a league (rosters, FAs, live stats) from Yahoo,
-    enriches it, and caches it in the user's session. This is the primary data
-    loading endpoint.
+    enriches it, and caches it in the server's memory.
     """
     league_id = request.args.get('league_id', type=str)
     week_num = request.args.get('week', type=int)
+    user_guid = session.get('yahoo_token_data', {}).get('guid')
 
-    if not week_num or not league_id:
-        return jsonify({"error": "Missing week or league_id parameter"}), 400
+    if not all([week_num, league_id, user_guid]):
+        return jsonify({"error": "Missing parameters or not authenticated"}), 400
 
     gm, error = check_auth_and_get_game()
     if error: return error
 
     try:
-        # Clear previous cache if league changes
-        if session.get('league_id') != league_id:
-            session.pop('league_data', None)
+        cache_key = f"{user_guid}_{league_id}_{week_num}"
 
-        print(f"Caching data for league {league_id}, week {week_num}...")
+        print(f"Caching data for league {league_id}, week {week_num} with key {cache_key}...")
         lg = gm.to_league(league_id)
 
         # 1. Fetch all rosters (already projection-enriched)
@@ -121,15 +122,18 @@ def api_cache_league_data():
             team_name = team_info['name']
             live_stats_by_team[team_name] = get_live_stats_for_team(lg, team_name, week_num)
 
-        # 5. Store everything in the session
-        session['league_id'] = league_id
-        session['week_num'] = week_num
-        session['league_data'] = {
+        # 5. Store everything in the server-side cache
+        LEAGUE_DATA_CACHE[cache_key] = {
             'rosters': all_rosters,
             'available_players': enriched_available_players,
             'live_stats': live_stats_by_team,
             'timestamp': time.time()
         }
+
+        # Store only the key and identifiers in the session cookie
+        session['cache_key'] = cache_key
+        session['league_id'] = league_id
+        session['week_num'] = week_num
         session.permanent = True
 
         print("Data successfully cached.")
@@ -156,16 +160,21 @@ def api_get_user_leagues():
 
 @api_bp.route("/api/rosters/week/<int:week_num>")
 def api_get_rosters_for_week(week_num):
-    """API endpoint to get raw roster data, using the session cache if available."""
-    league_id = request.args.get('league_id', type=str)
-    cached_data = session.get('league_data')
-    cached_league = session.get('league_id')
-    cached_week = session.get('week_num')
+    """API endpoint to get raw roster data, using the server-side cache if available."""
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
 
-    if cached_data and cached_league == league_id and cached_week == week_num:
+    # Check if the requested week and league match what the key represents
+    league_id = request.args.get('league_id', type=str)
+    session_league_id = session.get('league_id')
+    session_week_num = session.get('week_num')
+
+
+    if cached_data and session_league_id == league_id and session_week_num == week_num:
         print("Serving rosters from cache.")
         return jsonify(cached_data['rosters'])
 
+    # Fallback to live fetch if cache is invalid or missing
     print(f"Cache miss for rosters. Fetching live for league {league_id}, week {week_num}.")
     gm, error = check_auth_and_get_game()
     if error: return error
@@ -178,10 +187,12 @@ def api_get_rosters_for_week(week_num):
 def api_get_all_players():
     """
     API endpoint to get a team's roster and all available players (FA/W),
-    pulling from the pre-loaded session cache.
+    pulling from the pre-loaded server-side cache.
     """
     team_name = request.args.get('team_name', type=str)
-    cached_data = session.get('league_data')
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
+
 
     if not cached_data:
         return jsonify({"error": "No league data cached. Please select a league first."}), 400
@@ -200,10 +211,11 @@ def api_get_all_players():
 
 @api_bp.route("/api/matchup")
 def api_get_matchup():
-    """Gets matchup data from the session cache."""
+    """Gets matchup data from the server-side cache."""
     team1_name = request.args.get('team1', type=str)
     team2_name = request.args.get('team2', type=str)
-    cached_data = session.get('league_data')
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
     week_num = session.get('week_num')
 
     if not all([team1_name, team2_name, cached_data, week_num]):
@@ -317,7 +329,8 @@ def api_simulate_week():
     my_team_name = data.get('my_team')
     opponent_name = data.get('opponent')
     transactions = data.get('transactions', [])
-    cached_data = session.get('league_data')
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
     week_num = session.get('week_num')
 
 
@@ -376,7 +389,8 @@ def api_optimizer():
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
     target_date_str = request.args.get('date', type=str)
-    cached_data = session.get('league_data')
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
     week_num = session.get('week_num')
 
 
@@ -440,7 +454,8 @@ def api_optimizer():
 @api_bp.route("/api/weekly-optimizer")
 def api_weekly_optimizer():
     team_name = request.args.get('team', type=str)
-    cached_data = session.get('league_data')
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
     week_num = session.get('week_num')
 
     if not all([team_name, week_num, cached_data]):
@@ -516,7 +531,8 @@ def api_free_agents():
     my_team_name = request.args.get('my_team', type=str)
     opponent_name = request.args.get('opponent', type=str)
     start_index = request.args.get('start', type=int, default=0)
-    cached_data = session.get('league_data')
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
     week_num = session.get('week_num')
 
 
@@ -612,7 +628,8 @@ def api_free_agents():
 def api_goalie_scenarios():
     team_name = request.args.get('team', type=str)
     starts = request.args.get('starts', type=int, default=1)
-    cached_data = session.get('league_data')
+    cache_key = session.get('cache_key')
+    cached_data = LEAGUE_DATA_CACHE.get(cache_key)
 
     if not all([team_name, cached_data]):
         return jsonify({"error": "Missing parameters or cached data"}), 400
