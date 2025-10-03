@@ -64,15 +64,20 @@ def check_auth_and_get_game():
             response = requests.post(token_url, data=payload)
             response.raise_for_status()
 
-            new_token_data = response.json()
-            new_token_data['token_time'] = time.time()
+            new_token_data_from_refresh = response.json()
 
-            # A new refresh token is not always provided. Carry over the old one if needed.
-            if 'refresh_token' not in new_token_data:
-                new_token_data['refresh_token'] = token_data['refresh_token']
+            # Update the existing token_data, don't replace it entirely.
+            # This preserves the original xoauth_yahoo_guid.
+            token_data['access_token'] = new_token_data_from_refresh['access_token']
+            token_data['expires_in'] = new_token_data_from_refresh['expires_in']
+            token_data['token_time'] = time.time()
 
-            session['yahoo_token_data'] = new_token_data
-            token_data = new_token_data
+            # If a new refresh token is provided, update that too.
+            if 'refresh_token' in new_token_data_from_refresh:
+                token_data['refresh_token'] = new_token_data_from_refresh['refresh_token']
+
+            session['yahoo_token_data'] = token_data
+
             print("Successfully refreshed access token manually.")
 
         except Exception as e:
