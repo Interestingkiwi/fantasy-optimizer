@@ -16,12 +16,7 @@ from thefuzz import process
 from . import config
 
 def normalize_name(name):
-    """
-    Normalizes a player name by converting to lowercase, removing diacritics,
-    and removing all non-alphanumeric characters.
-    """
-    if not name:
-        return ""
+# ... existing code ...
     # NFD form separates combined characters into base characters and diacritics
     nfkd_form = unicodedata.normalize('NFKD', name.lower())
     # Keep only ASCII characters
@@ -30,17 +25,7 @@ def normalize_name(name):
     return re.sub(r'[^a-z0-9]', '', ascii_name)
 
 def find_best_match(name, choices, score_cutoff=90):
-    """
-    Finds the best fuzzy match for a name from a dictionary of choices.
-
-    Args:
-        name (str): The name to match (e.g., from Yahoo).
-        choices (dict): A dictionary mapping normalized_name -> original_name from the DB.
-        score_cutoff (int): The minimum score (0-100) to consider a match.
-
-    Returns:
-        str: The best matching normalized_name, or None if no match meets the cutoff.
-    """
+# ... existing code ...
     # extractOne returns a tuple of (best_match_original_name, score, best_match_normalized_key)
     # We provide the original names for matching but want the key back.
     best_match = process.extractOne(name, choices, score_cutoff=score_cutoff)
@@ -188,6 +173,75 @@ def get_weekly_roster_data(gm, league_id, week_num):
         if "invalid" in str(e).lower() and "league" in str(e).lower():
              return {"error": f"Invalid League ID: {league_id}. Please check the ID and try again."}
         return {"error": f"An error occurred fetching Yahoo data: {e}"}
+
+def enrich_fa_list_with_projections(fa_list, week_num):
+    """
+    Enriches a list of raw player data from Yahoo with projection and schedule
+    data from the local SQLite database.
+    """
+    if not fa_list:
+        return []
+
+    con = sqlite3.connect(config.DB_FILE)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+
+    try:
+        cur.execute("SELECT start_date, end_date FROM fantasy_weeks WHERE week_number = ?", (week_num,))
+        week_info = cur.fetchone()
+        if not week_info:
+            return []
+        week_start = datetime.fromisoformat(week_info['start_date']).date()
+        week_end = datetime.fromisoformat(week_info['end_date']).date()
+
+        cur.execute("SELECT team_tricode, schedule_json FROM team_schedules")
+        schedules = {row['team_tricode']: json.loads(row['schedule_json']) for row in cur.fetchall()}
+
+        enriched_players = []
+        for player in fa_list:
+            normalized_name = normalize_name(player['name'])
+
+            # Handle name collisions
+            if normalized_name in ['sebastianaho', 'eliaspettersson']:
+                is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in player['eligible_positions'])
+                is_defense = 'D' in player['eligible_positions']
+                if is_forward and not is_defense: normalized_name = f"{normalized_name}f"
+                elif is_defense and not is_forward: normalized_name = f"{normalized_name}d"
+
+            cur.execute("SELECT * FROM projections WHERE normalized_name = ?", (normalized_name,))
+            proj_row = cur.fetchone()
+            if not proj_row:
+                continue
+
+            proj_dict = dict(proj_row)
+            team_tricode = proj_dict.get('team', 'N/A').upper()
+            schedule = schedules.get(team_tricode, [])
+            games_this_week = sum(1 for d_str in schedule if week_start <= datetime.fromisoformat(d_str).date() <= week_end)
+
+            weekly_projections = {}
+            for stat, value in proj_dict.items():
+                if isinstance(value, (int, float)):
+                    if stat in ['gaa', 'svpct']:
+                        weekly_projections[stat] = float(value)
+                    else:
+                        weekly_projections[stat] = round(float(value) * games_this_week, 2)
+
+            processed_player = {
+                "name": player['name'],
+                "team": team_tricode,
+                "availability": player.get('availability', 'FA'),
+                "positions": ', '.join(player['eligible_positions']),
+                "games_this_week": games_this_week,
+                "weekly_projections": weekly_projections,
+                "per_game_projections": proj_dict
+            }
+            enriched_players.append(processed_player)
+
+    finally:
+        con.close()
+
+    return enriched_players
+
 
 def calculate_optimized_totals(roster, week_num, schedules, week_dates, transactions=[]):
     from .optimization_logic import find_optimal_lineup

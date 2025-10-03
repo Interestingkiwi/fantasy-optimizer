@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const weekSelector = document.getElementById('weekSelector');
     const runAnalysisBtn = document.getElementById('runAnalysisBtn');
     const allPlayersBtn = document.getElementById('allPlayersBtn');
+    const refreshDataBtn = document.getElementById('refreshDataBtn');
     const dateSelector = document.getElementById('dateSelector');
     const optimizeBtn = document.getElementById('optimizeBtn');
     const loadRawDataBtn = document.getElementById('loadRawDataBtn');
@@ -90,14 +91,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const week = weekSelector.value;
         if (!leagueId) return;
 
-        ui.showLoading(myTeamSelector, 'Loading...');
-        ui.showLoading(opponentSelector, 'Loading...');
+        ui.showLoading(myTeamSelector, 'Loading League Data from Yahoo...');
+        ui.showLoading(opponentSelector, 'This may take a moment...');
         ui.clearAllSections(allContainers);
 
         try {
+            // This is the new caching call. It fetches all data and stores it on the server.
+            const teamNames = await api.cacheLeagueData(leagueId, week);
+
+            // The API now returns just team names. We need to fetch the roster data separately
+            // for the transaction simulator, or adjust the backend to return it.
+            // For now, let's fetch it. The backend will use its cache.
             currentRosterData = await api.fetchRosters(leagueId, week);
-            if (Object.keys(currentRosterData).length === 0 || currentRosterData.error) {
-                 throw new Error(currentRosterData.error || "No teams found in this league.");
+
+            if (!teamNames || teamNames.length === 0) {
+                 throw new Error("No teams found in this league.");
             }
             ui.populateTeamSelectors(myTeamSelector, opponentSelector, currentRosterData);
         } catch (error) {
@@ -105,6 +113,17 @@ document.addEventListener('DOMContentLoaded', () => {
             alert(`Could not load team data for league ${leagueId}. Please check the ID and try again. Error: ${error.message}`);
             ui.populateTeamSelectors(myTeamSelector, opponentSelector, {}); // Clear selectors
         }
+    }
+
+    async function handleRefreshData() {
+        const leagueId = getSelectedLeagueId();
+        const week = weekSelector.value;
+        if (!leagueId) {
+            alert("Please select a league before refreshing.");
+            return;
+        }
+        await handleLeagueChange(); // Re-running the league change handler effectively refreshes the data
+        alert("League data has been refreshed from Yahoo.");
     }
 
     async function handleRunAnalysis() {
@@ -129,6 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ui.showLoading(matchupContainer, `Loading matchup...`);
         try {
+            // This call is now much faster as it uses server-side cache
             const data = await api.fetchMatchup(leagueId, week, myTeam, opponent);
             matchupContainer.innerHTML = '';
             matchupContainer.appendChild(ui.createSummaryTable(myTeam, data[myTeam].current_stats, data[myTeam].live_proj, opponent, data[opponent].current_stats, data[opponent].live_proj));
@@ -381,6 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
     weekSelector.addEventListener('change', handleLeagueChange);
 
     runAnalysisBtn.addEventListener('click', handleRunAnalysis);
+    refreshDataBtn.addEventListener('click', handleRefreshData);
 
     allPlayersBtn.addEventListener('click', () => {
         const leagueId = getSelectedLeagueId();

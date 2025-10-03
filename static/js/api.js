@@ -58,6 +58,13 @@ export async function logout() {
     await fetch(`${API_BASE_URL}/api/auth/logout`);
 }
 
+// --- Caching and Data Loading ---
+export async function cacheLeagueData(leagueId, week) {
+    const params = new URLSearchParams({ league_id: leagueId, week });
+    const response = await fetch(`${API_BASE_URL}/api/cache-league-data?${params}`);
+    return handleResponse(response);
+}
+
 // --- Exported API Functions ---
 export async function fetchLeagues() {
     const response = await fetch(`${API_BASE_URL}/api/leagues`);
@@ -65,6 +72,7 @@ export async function fetchLeagues() {
 }
 
 export async function fetchRosters(leagueId, week) {
+    // This will now pull from the cache on the backend if available
     const params = new URLSearchParams({ league_id: leagueId });
     const response = await fetch(`${API_BASE_URL}/api/rosters/week/${week}?${params}`);
     return handleResponse(response);

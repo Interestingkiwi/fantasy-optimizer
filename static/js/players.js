@@ -21,7 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Initial Setup ---
     const params = new URLSearchParams(window.location.search);
-    const leagueId = params.get('league_id');
+    const leagueId = params.get('league_id'); // Still useful for context, but not for API call
     const teamName = params.get('team_name');
     const week = params.get('week');
 
@@ -223,7 +223,9 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     async function fetchAndDisplayData() {
         try {
-            const apiUrl = `${API_BASE_URL}/api/all-players?league_id=${leagueId}&team_name=${encodeURIComponent(teamName)}&week=${week}`;
+            // This API call now correctly relies on the server-side session cache.
+            // We only need to pass the team_name to identify which roster to pull.
+            const apiUrl = `${API_BASE_URL}/api/all-players?team_name=${encodeURIComponent(teamName)}`;
             const response = await fetch(apiUrl);
             if (!response.ok) {
                 const errData = await response.json();
