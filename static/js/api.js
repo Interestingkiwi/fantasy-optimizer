@@ -13,7 +13,7 @@ export const API_BASE_URL = HOSTING_ENVIRONMENT === 'localhost' ? 'http://127.0.
 async function handleResponse(response) {
     if (response.status === 401) {
         // Handle unauthorized responses by reloading the page to trigger login.
-        alert("Your session has expired. Please log in again.");
+        alert("Your session has expired, please log in again.");
         window.location.reload();
         // Throw an error to stop the current promise chain
         throw new Error("Unauthorized");

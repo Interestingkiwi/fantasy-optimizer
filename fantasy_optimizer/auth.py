@@ -1,5 +1,6 @@
 """
 Handles Yahoo OAuth2 authentication for the application.
+Updated: 10/3/2025
 """
 import os
 import json

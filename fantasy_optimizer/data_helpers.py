@@ -2,6 +2,7 @@
 This module contains helper functions for fetching and processing data
 from the database and the Yahoo Fantasy API. It keeps the route handlers
 in routes.py cleaner and focused on request/response logic.
+Updated: 10/3/2025
 """
 import sqlite3
 import json

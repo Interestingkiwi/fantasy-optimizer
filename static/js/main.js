@@ -409,7 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const week = weekSelector.value;
 
         if (!leagueId || !myTeam) {
-            alert("Please select a league and your team first.");
+            alert("Please select a league and your team first");
             return;
         }
 

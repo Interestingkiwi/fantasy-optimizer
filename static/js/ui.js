@@ -307,7 +307,7 @@ export function createFreeAgentTable(freeAgents, weights) {
         const style = weight >= 2.0 ? 'style="background-color: #ffeeba;"' : '';
         return `<th ${style}>${stat.toUpperCase()}</th>`;
     }).join('');
-    table.innerHTML = `<thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Positions</th><th>Games</th><th>Total Rank</th>${headerStats}<th>Start Days</th><th>Next Week Starts</th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Positions</th><th>Games</th><th>Cat Coverage Rank</th>${headerStats}<th>Start Days</th><th>Next Week Starts</th></tr></thead>`;
 
     const tbody = document.createElement('tbody');
     if (freeAgents.length === 0) {

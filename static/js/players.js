@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const week = params.get('week');
 
     if (!leagueId || !teamName || !week) {
-        pageTitle.textContent = "Error: Missing league, team, or week information in URL.";
+        pageTitle.textContent = "Error: Missing league, team or week information in URL.";
         return;
     }
 

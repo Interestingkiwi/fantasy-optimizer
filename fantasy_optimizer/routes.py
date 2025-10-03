@@ -2,6 +2,7 @@
 This module contains all the Flask routes (API endpoints) for the application.
 It uses a Flask Blueprint to keep the routes organized and separate from the main
 application initialization logic.
+Updated: 10/3/2025
 """
 import sqlite3
 import json
