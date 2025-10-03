@@ -119,7 +119,8 @@ def api_cache_league_data():
     """
     league_id = request.args.get('league_id', type=str)
     week_num = request.args.get('week', type=int)
-    user_guid = session.get('yahoo_token_data', {}).get('xoauth_yahoo_guid')
+    # FIX: The key for the user GUID from yahoo-oauth is 'guid', not 'xoauth_yahoo_guid'
+    user_guid = session.get('yahoo_token_data', {}).get('guid')
 
     if not all([week_num, league_id, user_guid]):
         return jsonify({"error": "Missing parameters or not authenticated"}), 400
