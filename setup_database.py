@@ -92,35 +92,6 @@ def sanitize_header(header_list):
 
     return sanitized
 
-def calculate_per_game_stats(row, gp_index, stat_indices):
-    """
-    Takes a players total projected stat for a column, and converts it to a
-    per game figure by dividing it by expected games played.
-    """
-    try:
-        # Get the number of games played, default to 0 if it's not a valid number
-        games_played = float(row[gp_index])
-    except (ValueError, IndexError):
-        games_played = 0.0
-
-    # If games played is 0, we can't divide. All per-game stats will be 0.
-    if games_played == 0:
-        for i in stat_indices:
-            if i < len(row):
-                row[i] = 0.0
-        return row
-
-    # Loop through the stat columns and calculate the per-game average
-    for i in stat_indices:
-        if i < len(row):
-            try:
-                stat_value = float(row[i])
-                row[i] = round(stat_value / games_played, 4) # Calculate and round to 4 decimal places
-            except (ValueError, IndexError, TypeError):
-                # If the stat itself isn't a valid number, just set it to 0
-                row[i] = 0.0
-    return row
-
 def calculate_and_add_category_ranks(player_data):
     """
     Calculates category ranks for specified stats based on percentile and adds them to player data.
@@ -245,7 +216,6 @@ def setup_projections_table(cursor):
 
             for row in reader:
                 if not row or (pos_idx < len(row) and 'G' in row[pos_idx]): continue
-                calculate_per_game_stats(row, gp_idx, skater_stat_indices)
                 player_name = row[p_name_idx]
                 if not player_name: continue
                 normalized = normalize_name(player_name)
@@ -275,7 +245,6 @@ def setup_projections_table(cursor):
 
             for row in reader:
                 if not row: continue
-                calculate_per_game_stats(row, gp_goalie_idx, goalie_stat_indices)
                 player_name = row[p_name_idx]
                 if not player_name: continue
                 normalized = normalize_name(player_name)

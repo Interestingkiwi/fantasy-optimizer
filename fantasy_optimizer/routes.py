@@ -302,7 +302,6 @@ def api_get_matchup():
             total_gs = live_gs + rem_gs
 
             # Update combined dictionary with correctly calculated rate stats
-            # FIX: Round GAA and SV% to three decimal places for display.
             combined['gaa'] = round(total_ga / total_gs, 3) if total_gs > 0 else 0.0
             combined['svpct'] = round(total_sv / total_sa, 3) if total_sa > 0 else 0.0
 

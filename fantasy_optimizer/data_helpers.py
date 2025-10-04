@@ -52,7 +52,6 @@ def find_best_match(name, choices, score_cutoff=90):
 
 def get_user_leagues(gm):
     """Fetches all hockey leagues for the authenticated user."""
-    # FIX: Updated the year from 2024 to 2025 to fetch leagues for the current 2025-26 season.
     leagues_data = gm.league_ids(year=2025)
     leagues = []
     for league_id in leagues_data:
@@ -110,9 +109,6 @@ def get_weekly_roster_data(gm, league_id, week_num):
         for team_key, team_info in all_teams_data.items():
             team_name = team_info['name']
             team = lg.to_team(team_key)
-            # FIX: Pass the datetime.date object directly to the roster method.
-            # The yahoo_fantasy_api library expects a date object, and passing an isoformat string
-            # was causing an AttributeError ('str' object has no attribute 'strftime') internally.
             roster = team.roster(day=week_end_date) # Roster for the end of the week
             roster_data = []
 
@@ -120,9 +116,6 @@ def get_weekly_roster_data(gm, league_id, week_num):
                 # Normalize the player name from Yahoo for a robust DB lookup.
                 normalized_player_name = normalize_name(player['name'])
 
-                # FIX: Handle players with the same name (e.g., Sebastian Aho, Elias Pettersson)
-                # Projections may distinguish them by appending (F) or (D), which our normalize_name function includes.
-                # We need to construct the same normalized name from Yahoo data.
                 if normalized_player_name in ['sebastianaho', 'eliaspettersson']:
                     is_forward = any(pos in ['C', 'LW', 'RW', 'F'] for pos in player['eligible_positions'])
                     is_defense = 'D' in player['eligible_positions']
@@ -152,15 +145,12 @@ def get_weekly_roster_data(gm, league_id, week_num):
 
                 weekly_projections = {}
                 num_games = games_this_week.get(player_team_tricode, 0)
-                # FIX: Ensure all numeric stats are processed, not just a subset.
                 for stat, value in player_projections.items():
                     if stat not in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age'] and value is not None:
                         try:
-                            # FIX: Rate stats like GAA and SV% are averages and should not be multiplied by games.
                             if stat in ['gaa', 'svpct']:
                                 weekly_projections[stat] = float(value)
                             else:
-                                # Note: The database should already contain per-game stats.
                                 weekly_projections[stat] = round(float(value) * num_games, 2)
                         except (ValueError, TypeError):
                             weekly_projections[stat] = 0
@@ -233,7 +223,6 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
             daily_lineups[date_str] = optimal_roster_tuples
 
             for player, pos_filled in optimal_roster_tuples:
-                # FIX: Sum all per-game counting stats daily. Rate stats will be calculated once at the end.
                 for stat, value in player['per_game_projections'].items():
                     # Skip non-stat fields and rate stats that need special calculation
                     if stat in ['player_name', 'team', 'positions', 'normalized_name', 'playerid', 'rank', 'age', 'svpct', 'gaa'] or value is None:
@@ -250,7 +239,6 @@ def calculate_optimized_totals(roster, week_num, schedules, week_dates, transact
     else:
         totals['svpct'] = 0
 
-    # FIX: Correctly calculate GAA from summed totals, not by averaging daily GAAs.
     if totals.get('gs', 0) > 0:
         totals['gaa'] = totals['ga'] / totals['gs']
     else:

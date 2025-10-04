@@ -16,13 +16,8 @@ def create_app():
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static')
     app = Flask(__name__, static_folder=static_dir)
 
-    # IMPORTANT: Add ProxyFix middleware here.
-    # This tells the app to trust the headers from the proxy server (like Render, Heroku, etc.)
-    # regarding the protocol (http/https) and host. This is crucial for OAuth to work in production.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-    # Set a secret key for session management.
-    # It's important that this is a complex, random string in production.
     app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev_secret_key_should_be_changed')
 
     CORS(app, supports_credentials=True)

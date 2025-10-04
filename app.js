@@ -151,7 +151,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchAndDisplayOptimalRoster() {
-        // ... (this function remains the same)
         const myTeam = myTeamSelector.value;
         const opponent = opponentSelector.value;
         const week = weekSelector.value;
@@ -190,7 +189,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchAndDisplayFreeAgents(startIndex = 0) {
-        // ... (this function remains the same)
         freeAgentStartIndex = startIndex;
         const myTeam = myTeamSelector.value;
         const opponent = opponentSelector.value;
@@ -232,7 +230,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchAndDisplayAllRosters() {
-        // ... (this function remains the same)
         const selectedWeek = weekSelector.value;
         showLoading(rostersContainer, `Loading raw roster data for week ${selectedWeek}...`);
         clearAllSections(rostersContainer);
@@ -346,7 +343,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createUtilizationTable(roster, titleText) {
-        // ... (this function remains the same)
         const container = document.createElement('div');
         const title = document.createElement('h3');
         title.textContent = titleText;
@@ -444,7 +440,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createOptimizerSection(title, players, isStarting = true) {
-        // ... (this function remains the same)
         const div = document.createElement('div');
         div.className = 'team-section';
         if (title) {
@@ -457,7 +452,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createOptimizerTable(players, isStarting) {
-        // ... (this function remains the same)
         const table = document.createElement('table');
         const header = isStarting ? '<th>Player</th><th>Pos</th><th>Team</th><th>Value</th>' : '<th>Player</th><th>Pos</th><th>Team</th><th>Proj. Pts</th>';
         table.innerHTML = `<thead><tr>${header}</tr></thead>`;
@@ -475,7 +469,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createOptimizerContextSection(title, context) {
-        // ... (this function remains the same)
         const div = document.createElement('div');
         div.className = 'team-section';
         const h4 = document.createElement('h4');
@@ -532,7 +525,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createFreeAgentPagination(startIndex, resultCount) {
-        // ... (this function remains the same)
         const div = document.createElement('div');
         div.className = 'pagination-controls';
         const prevBtn = document.createElement('button');
@@ -551,7 +543,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createPlayerTable(rosterData, statToDisplay) {
-        // ... (this function remains the same)
         const table = document.createElement('table');
         const statHeader = statToDisplay.toUpperCase();
         table.innerHTML = `<thead><tr><th>Player</th><th>Pos</th><th>Team</th><th>Games</th><th>Proj. ${statHeader}</th></tr></thead>`;
@@ -561,7 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (player.weekly_projections && player.weekly_projections[statToDisplay] !== undefined) {
                 weeklyStat = player.weekly_projections[statToDisplay];
             }
-            tbody.innerHTML += `<tr><td>${p.name}</td><td>${p.positions}</td><td>${p.team}</td><td>${p.games_this_week}</td><td>${weeklyStat}</td></tr>`;
+            tbody.innerHTML += `<tr><td>${player.name}</td><td>${player.positions}</td><td>${player.team}</td><td>${player.games_this_week}</td><td>${weeklyStat}</td></tr>`;
         });
         table.appendChild(tbody);
         return table;
