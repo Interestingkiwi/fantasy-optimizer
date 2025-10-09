@@ -283,11 +283,27 @@ def get_live_stats_for_team(lg, team_name, week_num):
             print(f"Warning: Team key not found for team name '{team_name}'")
             return {}
 
-        matchup_data = lg.matchup(team_key, week=week_num)
+        # FIX: Changed to use team.matchup_stats() which provides a cleaner stats list.
+        # This is more robust against changes in the underlying Yahoo API structure.
+        team = lg.to_team(team_key)
+        stats_list = team.matchup_stats(week=week_num)
 
-        # The matchup data is directly the stats for that team in that week
-        if matchup_data:
-             return {stat: val for stat, val in matchup_data.items() if isinstance(val, (int, float, str))}
+        if stats_list:
+            # The library returns a list of dicts. We convert it to a single dict
+            # mapping the stat abbreviation (e.g., 'G', 'A') to its value.
+            # The app uses lowercase stat names, so we convert them.
+            stats_dict = {}
+            for stat_item in stats_list:
+                display_name = stat_item.get('display')
+                if display_name:
+                    key = display_name.lower()
+                    if key == 'sv%':
+                        key = 'svpct'
+                    elif key == '+/-':
+                        key = 'plus_minus'
+
+                    stats_dict[key] = stat_item.get('value')
+            return stats_dict
 
         print(f"No live matchup data found for {team_name} in week {week_num}.")
         return {}
