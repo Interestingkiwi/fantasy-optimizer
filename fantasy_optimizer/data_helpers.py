@@ -276,66 +276,31 @@ def get_live_stats_for_team(lg, team_name, week_num):
     Fetches live stats for a specific team for a given fantasy week.
     """
     try:
-        # Fetch all matchups for the week from the API
-        scoreboard_data = lg.matchups(week=week_num)
+        all_teams = lg.teams()
+        team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name), None)
 
-        # Navigate through the nested JSON structure to get to the list of matchups
-        try:
-            # The actual path in the yfa response
-            matchups_container = scoreboard_data['fantasy_content']['league'][1]['scoreboard']['0']['matchups']
-        except (KeyError, IndexError, TypeError) as e:
-            print(f"Error parsing scoreboard data structure: {e}. Data received: {scoreboard_data}")
+        if not team_key:
+            print(f"Warning: Team key not found for team name '{team_name}'")
             return {}
 
-        # The matchups are in a dict with keys '0', '1', etc. and a 'count'
-        for i in range(int(matchups_container['count'])):
-            matchup = matchups_container[str(i)]['matchup']
+        team_obj = lg.to_team(team_key)
 
-            # Each matchup contains two teams, keyed '0' and '1'
-            team0_container = matchup['0']['teams']['0']['team']
-            team1_container = matchup['1']['teams']['0']['team']
+        # FIX: Use team_obj.stats() which directly returns the stats for a given week.
+        stats_list = team_obj.stats(week=week_num)
 
-            target_team_stats_list = None
-            # The team name is at index 2 of the team list
-            if team0_container[2]['name'] == team_name:
-                # The stats are in a sub-dictionary within the list
-                for item in team0_container:
-                    if 'team_stats' in item:
-                        target_team_stats_list = item['team_stats']['stats']
-                        break
-            elif team1_container[2]['name'] == team_name:
-                for item in team1_container:
-                    if 'team_stats' in item:
-                        target_team_stats_list = item['team_stats']['stats']
-                        break
+        stats_dict = {}
+        stat_name_map = { 'SV%': 'svpct', '+/-': 'plus_minus' }
 
-            if target_team_stats_list:
-                stats_dict = {}
-                # The stat categories map from the league can resolve stat_ids
-                stat_map = {str(s['stat_id']): s['display_name'] for s in lg.stat_categories()}
+        for stat_item in stats_list:
+            display_name = stat_item['display']
+            key = stat_name_map.get(display_name, display_name.lower())
+            value = stat_item['value']
+            if value == '-':
+                value = 0
+            stats_dict[key] = value
 
-                for stat_item in target_team_stats_list:
-                    stat_id = str(stat_item['stat']['stat_id'])
-                    stat_name = stat_map.get(stat_id)
-
-                    if stat_name:
-                        key = stat_name.lower()
-                        if key == 'sv%':
-                            key = 'svpct'
-                        elif key == '+/-':
-                            key = 'plus_minus'
-
-                        value = stat_item['stat']['value']
-                        # Handle empty stats which can be represented by '-'
-                        if value == '-':
-                            value = 0
-                        stats_dict[key] = value
-
-                print(f"Live stats for {team_name}: {stats_dict}")
-                return stats_dict
-
-        print(f"No matchup found for {team_name} in week {week_num}.")
-        return {}
+        print(f"Live stats for {team_name}: {stats_dict}")
+        return stats_dict
 
     except Exception as e:
         print(f"Could not fetch live matchup data for {team_name} (week {week_num}): {e}")
