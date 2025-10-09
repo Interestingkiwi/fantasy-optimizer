@@ -276,31 +276,37 @@ def get_live_stats_for_team(lg, team_name, week_num):
     Fetches live stats for a specific team for a given fantasy week.
     """
     try:
-        all_teams = lg.teams()
-        team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name), None)
+        # Fetch the scoreboard for the specified week, which contains all matchups
+        scoreboard = lg.scoreboard(week=week_num)
 
-        if not team_key:
-            print(f"Warning: Team key not found for team name '{team_name}'")
-            return {}
+        # The scoreboard contains a 'matchups' key with a list of matchup dicts
+        for matchup in scoreboard.get('matchups', []):
 
-        team_obj = lg.to_team(team_key)
+            # Find the team in the current matchup
+            target_team_stats = None
+            if matchup['teams'][0]['name'] == team_name:
+                target_team_stats = matchup['teams'][0].get('stats', [])
+            elif matchup['teams'][1]['name'] == team_name:
+                target_team_stats = matchup['teams'][1].get('stats', [])
 
-        # FIX: Use team_obj.stats() which directly returns the stats for a given week.
-        stats_list = team_obj.stats(week=week_num)
+            if target_team_stats:
+                stats_dict = {}
+                stat_name_map = { 'SV%': 'svpct', '+/-': 'plus_minus' }
 
-        stats_dict = {}
-        stat_name_map = { 'SV%': 'svpct', '+/-': 'plus_minus' }
+                # The stats are a list of dicts, each with 'display' and 'value'
+                for stat_item in target_team_stats:
+                    display_name = stat_item['display']
+                    key = stat_name_map.get(display_name, display_name.lower())
+                    value = stat_item['value']
+                    if value == '-':
+                        value = 0
+                    stats_dict[key] = value
 
-        for stat_item in stats_list:
-            display_name = stat_item['display']
-            key = stat_name_map.get(display_name, display_name.lower())
-            value = stat_item['value']
-            if value == '-':
-                value = 0
-            stats_dict[key] = value
+                print(f"Live stats for {team_name}: {stats_dict}")
+                return stats_dict
 
-        print(f"Live stats for {team_name}: {stats_dict}")
-        return stats_dict
+        print(f"No matchup found for {team_name} in week {week_num}.")
+        return {}
 
     except Exception as e:
         print(f"Could not fetch live matchup data for {team_name} (week {week_num}): {e}")
