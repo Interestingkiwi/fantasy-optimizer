@@ -276,51 +276,47 @@ def get_live_stats_for_team(lg, team_name, week_num):
     Fetches live stats for a specific team for a given fantasy week.
     """
     try:
-        # The matchups() method is the correct one to get scoreboard data.
-        scoreboard_data = lg.matchups(week=week_num)
+        # Fetch matchups for the league for the given week
+        matchups = lg.matchups(week=week_num)
 
-        # Defensively parse the deeply nested dictionary returned by the API
-        matchups_container = scoreboard_data.get('fantasy_content', {}).get('league', [None, {}])[1].get('scoreboard', {}).get('0', {}).get('matchups')
-
-        if not matchups_container:
-            print(f"Could not find 'matchups' container in API response for week {week_num}.")
+        # The data structure is deeply nested, so we traverse it carefully
+        league_data = matchups.get('fantasy_content', {}).get('league', [])
+        if not league_data or len(league_data) < 2:
             return {}
 
-        for i in range(int(matchups_container.get('count', 0))):
-            matchup = matchups_container.get(str(i), {}).get('matchup')
-            if not matchup:
-                continue
+        scoreboard = league_data[1].get('scoreboard', {})
+        matchups_data = scoreboard.get('0', {}).get('matchups', {})
 
-            teams = matchup.get('teams')
-            if not teams:
-                continue
+        for i in range(matchups_data.get('count', 0)):
+            matchup = matchups_data.get(str(i), {}).get('matchup', {})
 
-            for team_idx_key in teams:
-                if team_idx_key == 'count': continue # Skip the 'count' key
+            teams_data = matchup.get('teams', {})
+            for j in range(teams_data.get('count', 0)):
+                team_info = teams_data.get(str(j), {}).get('team', [])
 
-                team_data_container = teams.get(team_idx_key, {}).get('team')
-                if not team_data_container:
-                    continue
-
+                # The team info is a list of lists/dicts, find the name
                 current_team_name = None
-                team_stats_list = None
-                for item in team_data_container:
-                    if 'name' in item:
-                        current_team_name = item['name']
-                    if 'team_stats' in item:
-                        team_stats_list = item['team_stats'].get('stats')
+                if team_info and len(team_info) > 0 and isinstance(team_info[0], list):
+                    for team_detail in team_info[0]:
+                        if 'name' in team_detail:
+                            current_team_name = team_detail['name']
+                            break
 
-                if current_team_name == team_name and team_stats_list:
+                if current_team_name == team_name:
+                    # Found the team, now extract stats
+                    stats_list = []
+                    if len(team_info) > 1 and 'team_stats' in team_info[1]:
+                        stats_list = team_info[1].get('team_stats', {}).get('stats', [])
+
                     stats_dict = {}
                     stat_map = {str(s['stat_id']): s['display_name'] for s in lg.stat_categories()}
 
-                    for stat_item in team_stats_list:
-                        stat_id = str(stat_item.get('stat', {}).get('stat_id'))
+                    for stat_item in stats_list:
+                        stat_id = str(stat_item['stat']['stat_id'])
                         stat_name = stat_map.get(stat_id)
-
                         if stat_name:
                             key = stat_name.lower().replace('sv%', 'svpct').replace('+/-', 'plus_minus')
-                            value = stat_item.get('stat', {}).get('value')
+                            value = stat_item['stat']['value']
                             if value == '-': value = 0
                             stats_dict[key] = value
 
@@ -329,7 +325,6 @@ def get_live_stats_for_team(lg, team_name, week_num):
 
         print(f"No matchup found for {team_name} in week {week_num}.")
         return {}
-
     except Exception as e:
         print(f"Could not fetch live matchup data for {team_name} (week {week_num}): {e}")
         return {}
