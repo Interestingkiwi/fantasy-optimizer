@@ -249,22 +249,25 @@ def api_get_matchup():
                     print(f"Warning: Team key not found for team name '{team_name_to_fetch}'")
                     return {}
 
-                team_obj = lg.to_team(team_key)
-                stats_list = team_obj.matchup_stats(week=week)
+                # FIX: Use lg.matchup() which is the correct method on the league object
+                matchup_data = lg.matchup(team_key, week=week)
 
+                # The matchup data is directly the stats for that team in that week.
+                # We need to convert the stat names to lowercase for consistency.
                 stats_dict = {}
-                for stat_item in stats_list:
-                    display_name = stat_item.get('display')
-                    if display_name:
-                        key = display_name.lower()
-                        if key == 'sv%':
-                            key = 'svpct'
-                        elif key == '+/-':
-                            key = 'plus_minus'
+                stat_name_map = {
+                    'SV%': 'svpct',
+                    '+/-': 'plus_minus'
+                }
 
-                        stats_dict[key] = stat_item.get('value')
+                if matchup_data:
+                    for key, value in matchup_data.items():
+                        lower_key = stat_name_map.get(key, key.lower())
+                        stats_dict[lower_key] = value
+
                 print(f"Live stats for {team_name_to_fetch}: {stats_dict}")
                 return stats_dict
+
             except Exception as e:
                 print(f"Could not fetch live matchup data for {team_name_to_fetch} (week {week}): {e}")
                 return {}
@@ -740,7 +743,28 @@ def api_goalie_scenarios():
 
     try:
         lg = gm.to_league(league_id)
-        live_stats = get_live_stats_for_team(lg, team_name, week_num)
+
+        # Copied from the matchup route to ensure it works here too
+        def _get_live_stats_from_yahoo(team_name_to_fetch, week):
+            try:
+                all_teams = lg.teams()
+                team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name_to_fetch), None)
+                if not team_key: return {}
+
+                matchup_data = lg.matchup(team_key, week=week)
+
+                stats_dict = {}
+                stat_name_map = {'SV%': 'svpct', '+/-': 'plus_minus'}
+                if matchup_data:
+                    for key, value in matchup_data.items():
+                        lower_key = stat_name_map.get(key, key.lower())
+                        stats_dict[lower_key] = value
+                return stats_dict
+            except Exception as e:
+                print(f"Error in goalie scenarios live stats fetch: {e}")
+                return {}
+
+        live_stats = _get_live_stats_from_yahoo(team_name, week_num)
 
         try:
             current_ga = float(live_stats.get('ga', 0))
