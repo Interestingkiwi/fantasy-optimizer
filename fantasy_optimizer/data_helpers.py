@@ -276,41 +276,41 @@ def get_live_stats_for_team(lg, team_name, week_num):
     Fetches live stats for a specific team for a given fantasy week.
     """
     try:
-        all_teams = lg.teams()
-        team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name), None)
+        # Fetch all matchups for the week
+        matchups_data = lg.matchups(week=week_num)
 
-        if not team_key:
-            print(f"Warning: Team key not found for team name '{team_name}'")
-            return {}
+        # Find the specific matchup for our team
+        for matchup in matchups_data['matchups']:
+            # Each matchup has two teams, '0' and '1'
+            team0 = matchup['0']
+            team1 = matchup['1']
 
-        # FIX: Changed to use team.matchup_stats() which provides a cleaner stats list.
-        # This is more robust against changes in the underlying Yahoo API structure.
-        team = lg.to_team(team_key)
-        stats_list = team.matchup_stats(week=week_num)
+            target_team_data = None
+            if team0['name'] == team_name:
+                target_team_data = team0
+            elif team1['name'] == team_name:
+                target_team_data = team1
 
-        if stats_list:
-            # The library returns a list of dicts. We convert it to a single dict
-            # mapping the stat abbreviation (e.g., 'G', 'A') to its value.
-            # The app uses lowercase stat names, so we convert them.
-            stats_dict = {}
-            for stat_item in stats_list:
-                display_name = stat_item.get('display')
-                if display_name:
-                    key = display_name.lower()
-                    if key == 'sv%':
-                        key = 'svpct'
-                    elif key == '+/-':
-                        key = 'plus_minus'
+            if target_team_data:
+                stats_list = target_team_data['stats']
+                stats_dict = {}
+                stat_name_map = { 'SV%': 'svpct', '+/-': 'plus_minus' }
 
-                    stats_dict[key] = stat_item.get('value')
-            return stats_dict
+                for stat_item in stats_list:
+                    display_name = stat_item['display']
+                    key = stat_name_map.get(display_name, display_name.lower())
+                    stats_dict[key] = stat_item['value']
 
-        print(f"No live matchup data found for {team_name} in week {week_num}.")
+                print(f"Live stats for {team_name}: {stats_dict}")
+                return stats_dict
+
+        print(f"No matchup found for {team_name} in week {week_num}.")
         return {}
 
     except Exception as e:
         print(f"Could not fetch live matchup data for {team_name} (week {week_num}): {e}")
         return {}
+
 
 def get_healthy_free_agents(lg):
     """

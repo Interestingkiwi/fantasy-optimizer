@@ -13,7 +13,7 @@ from flask import Blueprint, jsonify, request, send_from_directory, session
 from yahoo_fantasy_api import game
 from . import config
 from .auth import get_oauth_client
-from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, normalize_name, get_healthy_free_agents
+from .data_helpers import get_user_leagues, get_weekly_roster_data, calculate_optimized_totals, get_live_stats_for_team, normalize_name, get_healthy_free_agents
 from .optimization_logic import find_optimal_lineup
 
 # Create a Blueprint. This is Flask's way of organizing groups of related routes.
@@ -240,40 +240,8 @@ def api_get_matchup():
         off_days = [row[0] for row in cur.fetchall()]
         con.close()
 
-        # Helper function to fetch live stats directly, bypassing data_helpers
-        def _get_live_stats_from_yahoo(team_name_to_fetch, week):
-            try:
-                all_teams = lg.teams()
-                team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name_to_fetch), None)
-                if not team_key:
-                    print(f"Warning: Team key not found for team name '{team_name_to_fetch}'")
-                    return {}
-
-                # FIX: Use lg.matchup() which is the correct method on the league object
-                matchup_data = lg.matchup(team_key, week=week)
-
-                # The matchup data is directly the stats for that team in that week.
-                # We need to convert the stat names to lowercase for consistency.
-                stats_dict = {}
-                stat_name_map = {
-                    'SV%': 'svpct',
-                    '+/-': 'plus_minus'
-                }
-
-                if matchup_data:
-                    for key, value in matchup_data.items():
-                        lower_key = stat_name_map.get(key, key.lower())
-                        stats_dict[lower_key] = value
-
-                print(f"Live stats for {team_name_to_fetch}: {stats_dict}")
-                return stats_dict
-
-            except Exception as e:
-                print(f"Could not fetch live matchup data for {team_name_to_fetch} (week {week}): {e}")
-                return {}
-
-        team1_live_stats = _get_live_stats_from_yahoo(team1_name, week_num)
-        team2_live_stats = _get_live_stats_from_yahoo(team2_name, week_num)
+        team1_live_stats = get_live_stats_for_team(lg, team1_name, week_num)
+        team2_live_stats = get_live_stats_for_team(lg, team2_name, week_num)
 
         def format_live_stats(stats):
             """Formats the raw live stats from Yahoo, rounding goalie rate stats."""
@@ -743,28 +711,7 @@ def api_goalie_scenarios():
 
     try:
         lg = gm.to_league(league_id)
-
-        # Copied from the matchup route to ensure it works here too
-        def _get_live_stats_from_yahoo(team_name_to_fetch, week):
-            try:
-                all_teams = lg.teams()
-                team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name_to_fetch), None)
-                if not team_key: return {}
-
-                matchup_data = lg.matchup(team_key, week=week)
-
-                stats_dict = {}
-                stat_name_map = {'SV%': 'svpct', '+/-': 'plus_minus'}
-                if matchup_data:
-                    for key, value in matchup_data.items():
-                        lower_key = stat_name_map.get(key, key.lower())
-                        stats_dict[lower_key] = value
-                return stats_dict
-            except Exception as e:
-                print(f"Error in goalie scenarios live stats fetch: {e}")
-                return {}
-
-        live_stats = _get_live_stats_from_yahoo(team_name, week_num)
+        live_stats = get_live_stats_for_team(lg, team_name, week_num)
 
         try:
             current_ga = float(live_stats.get('ga', 0))
