@@ -273,42 +273,23 @@ def api_get_matchup():
             # Combine all counting stats by simple addition
             all_keys = set(live.keys()) | set(remainder.keys())
             for key in all_keys:
-                # Skip rate stats and raw stats used for calculation
-                if key in ['svpct', 'gaa'] or key.startswith('raw_'):
-                    continue
+                if key in ['svpct', 'gaa']: continue # Skip rate stats for now
                 try:
-                    # Ensure both operands are numbers before adding
-                    live_val = float(live.get(key, 0))
-                    rem_val = float(remainder.get(key, 0))
-                    combined[key] = live_val + rem_val
+                    combined[key] = float(live.get(key, 0)) + remainder.get(key, 0)
                 except (ValueError, TypeError):
-                    # Fallback if a value isn't a number
                     combined[key] = remainder.get(key, 0)
 
             # --- Recalculate Goalie Rate Stats ---
-            # FIX: Prioritize using actual live SA and GS if available from the API,
-            # falling back to approximation only if necessary.
-            live_ga = float(live.get('ga', 0))
-            live_sv = float(live.get('sv', 0))
-            live_sa = float(live.get('sa', 0))
-            live_gs = float(live.get('gs', 0))
-
-            # Fallback approximation for older API responses that might lack SA/GS
-            if live_sa == 0:
-                try:
-                    live_svpct = float(live.get('svpct', 0))
-                    if live_svpct > 0:
-                        live_sa = live_sv / live_svpct
-                except (ValueError, TypeError, ZeroDivisionError):
-                    live_sa = 0
-
-            if live_gs == 0:
-                try:
-                    live_gaa = float(live.get('gaa', 0))
-                    if live_gaa > 0:
-                        live_gs = live_ga / live_gaa
-                except (ValueError, TypeError, ZeroDivisionError):
-                    live_gs = 0
+            try:
+                live_ga = float(live.get('ga', 0))
+                live_sv = float(live.get('sv', 0))
+                live_svpct = float(live.get('svpct', 0))
+                live_gaa = float(live.get('gaa', 0.0))
+                # Approximate live stats from what Yahoo provides
+                live_sa = live_sv / live_svpct if live_svpct > 0 else 0
+                live_gs = live_ga / live_gaa if live_gaa > 0 else 0
+            except (ValueError, TypeError):
+                live_ga, live_sv, live_sa, live_gs = 0.0, 0.0, 0.0, 0.0
 
             rem_ga = remainder.get('raw_ga', 0)
             rem_sv = remainder.get('raw_sv', 0)
@@ -321,13 +302,9 @@ def api_get_matchup():
             total_gs = live_gs + rem_gs
 
             # Update combined dictionary with correctly calculated rate stats
+            # FIX: Round GAA and SV% to three decimal places for display.
             combined['gaa'] = round(total_ga / total_gs, 3) if total_gs > 0 else 0.0
             combined['svpct'] = round(total_sv / total_sa, 3) if total_sa > 0 else 0.0
-
-            # Round other stats for cleaner display
-            for key, value in combined.items():
-                if key not in ['svpct', 'gaa']:
-                    combined[key] = round(value, 2)
 
             return combined
 
@@ -510,7 +487,7 @@ def api_weekly_optimizer():
         end_date = datetime.fromisoformat(week_info['end_date']).date()
 
         cur.execute("SELECT team_tricode, schedule_json FROM team_schedules")
-        schedules = {row['team_tricode']: json.loads(row['schedule_json']) for row in cur.fetchall()}
+        schedules = {row[0]: json.loads(row[1]) for row in cur.fetchall()}
         con.close()
 
         player_start_days = {player['name']: [] for player in team_roster}

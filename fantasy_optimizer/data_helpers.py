@@ -276,59 +276,25 @@ def get_live_stats_for_team(lg, team_name, week_num):
     Fetches live stats for a specific team for a given fantasy week.
     """
     try:
-        # Fetch matchups for the league for the given week
-        matchups = lg.matchups(week=week_num)
+        all_teams = lg.teams()
+        team_key = next((tk for tk, t_data in all_teams.items() if t_data['name'] == team_name), None)
 
-        # The data structure is deeply nested, so we traverse it carefully
-        league_data = matchups.get('fantasy_content', {}).get('league', [])
-        if not league_data or len(league_data) < 2:
+        if not team_key:
+            print(f"Warning: Team key not found for team name '{team_name}'")
             return {}
 
-        scoreboard = league_data[1].get('scoreboard', {})
-        matchups_data = scoreboard.get('0', {}).get('matchups', {})
+        matchup_data = lg.matchup(team_key, week=week_num)
 
-        for i in range(matchups_data.get('count', 0)):
-            matchup = matchups_data.get(str(i), {}).get('matchup', {})
+        # The matchup data is directly the stats for that team in that week
+        if matchup_data:
+             return {stat: val for stat, val in matchup_data.items() if isinstance(val, (int, float, str))}
 
-            teams_data = matchup.get('teams', {})
-            for j in range(teams_data.get('count', 0)):
-                team_info = teams_data.get(str(j), {}).get('team', [])
-
-                # The team info is a list of lists/dicts, find the name
-                current_team_name = None
-                if team_info and len(team_info) > 0 and isinstance(team_info[0], list):
-                    for team_detail in team_info[0]:
-                        if 'name' in team_detail:
-                            current_team_name = team_detail['name']
-                            break
-
-                if current_team_name == team_name:
-                    # Found the team, now extract stats
-                    stats_list = []
-                    if len(team_info) > 1 and 'team_stats' in team_info[1]:
-                        stats_list = team_info[1].get('team_stats', {}).get('stats', [])
-
-                    stats_dict = {}
-                    stat_map = {str(s['stat_id']): s['display_name'] for s in lg.stat_categories()}
-
-                    for stat_item in stats_list:
-                        stat_id = str(stat_item['stat']['stat_id'])
-                        stat_name = stat_map.get(stat_id)
-                        if stat_name:
-                            key = stat_name.lower().replace('sv%', 'svpct').replace('+/-', 'plus_minus')
-                            value = stat_item['stat']['value']
-                            if value == '-': value = 0
-                            stats_dict[key] = value
-
-                    print(f"Live stats for {team_name}: {stats_dict}")
-                    return stats_dict
-
-        print(f"No matchup found for {team_name} in week {week_num}.")
+        print(f"No live matchup data found for {team_name} in week {week_num}.")
         return {}
+
     except Exception as e:
         print(f"Could not fetch live matchup data for {team_name} (week {week_num}): {e}")
         return {}
-
 
 def get_healthy_free_agents(lg):
     """

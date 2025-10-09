@@ -49,46 +49,56 @@ export function createSummaryTable(team1, totals1Current, totals1Live, team2, to
 
     const table = document.createElement('table');
     table.className = 'totals-table';
-
-    // Based on user feedback, we always show the simplified view now.
     table.innerHTML = `
         <thead>
             <tr>
                 <th>Category</th>
-                <th>${team1}</th>
-                <th>${team2}</th>
+                <th>${team1} (Current)</th>
+                <th>${team1} (Live Proj)</th>
+                <th>${team2} (Current)</th>
+                <th>${team2} (Live Proj)</th>
             </tr>
         </thead>`;
-
-
     const tbody = document.createElement('tbody');
     const inverseStats = ['gaa'];
 
     STATS_TO_DISPLAY_H2H.forEach(stat => {
-        // We only care about the live projection stats now
+        const t1_current = totals1Current ? (totals1Current[stat] !== undefined ? totals1Current[stat] : 0) : 'N/A';
         const t1_live = totals1Live ? (totals1Live[stat] !== undefined ? totals1Live[stat] : 0) : 'N/A';
+        const t2_current = totals2Current ? (totals2Current[stat] !== undefined ? totals2Current[stat] : 0) : 'N/A';
         const t2_live = totals2Live ? (totals2Live[stat] !== undefined ? totals2Live[stat] : 0) : 'N/A';
 
         const isInverse = inverseStats.includes(stat);
-        let live1_style = '', live2_style = '';
+        let current1_style = '', current2_style = '', live1_style = '', live2_style = '';
 
-        // Style logic for live projection comparison
+        if (t1_current !== 'N/A' && t2_current !== 'N/A') {
+            if ((!isInverse && t1_current > t2_current) || (isInverse && t1_current < t2_current)) {
+                current1_style = 'background-color: #d4edda;'; // Green for team 1 win
+                current2_style = 'background-color: #f8d7da;'; // Red for team 2 loss
+            } else if ((!isInverse && t2_current > t1_current) || (isInverse && t2_current < t1_current)) {
+                current2_style = 'background-color: #d4edda;'; // Green for team 2 win
+                current1_style = 'background-color: #f8d7da;'; // Red for team 1 loss
+            }
+        }
         if (t1_live !== 'N/A' && t2_live !== 'N/A') {
             if ((!isInverse && t1_live > t2_live) || (isInverse && t1_live < t2_live)) {
-                live1_style = 'background-color: #d4edda;'; // Green for winning
-                live2_style = 'background-color: #f8d7da;'; // Red for losing
+                live1_style = 'background-color: #d4edda;';
+                live2_style = 'background-color: #f8d7da;';
             } else if ((!isInverse && t2_live > t1_live) || (isInverse && t2_live < t1_live)) {
                 live2_style = 'background-color: #d4edda;';
                 live1_style = 'background-color: #f8d7da;';
             }
         }
 
-        const row = document.createElement('tr');
-        row.innerHTML = `<td>${stat.toUpperCase()}</td>`;
-        row.innerHTML += `<td style="${live1_style}">${t1_live}</td><td style="${live2_style}">${t2_live}</td>`;
-        tbody.appendChild(row);
+        tbody.innerHTML += `
+            <tr>
+                <td>${stat.toUpperCase()}</td>
+                <td style="${current1_style}">${t1_current}</td>
+                <td style="${live1_style}">${t1_live}</td>
+                <td style="${current2_style}">${t2_current}</td>
+                <td style="${live2_style}">${t2_live}</td>
+            </tr>`;
     });
-
     table.appendChild(tbody);
     container.appendChild(table);
     return container;
