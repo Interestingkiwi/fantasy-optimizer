@@ -1,0 +1,4 @@
+/* Use Inter as the default font */
+body {
+    font-family: 'Inter', sans-serif;
+}
