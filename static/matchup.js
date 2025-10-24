@@ -162,7 +162,7 @@
                     <tbody class="bg-gray-800 divide-y divide-gray-700">
         `;
 
-        const goalieCats = { 'SV%': ['SV', 'SA'], 'GAA': ['GA', 'TOI/G'] };
+        const goalieCats = { 'SVpct': ['SV', 'SA'], 'GAA': ['GA', 'TOI/G'] };
         const allGoalieSubCats = Object.values(goalieCats).flat();
 
         pageData.scoring_categories.forEach(cat => {
@@ -171,7 +171,7 @@
 
             let t1_live_val, t2_live_val;
 
-            if (category === 'SV%') {
+            if (category === 'SVpct') {
                 const t1_sv = stats.team1.live['SV'] || 0;
                 const t1_sa = stats.team1.live['SA'] || 0;
                 t1_live_val = t1_sa > 0 ? (t1_sv / t1_sa) : 0;
@@ -221,8 +221,8 @@
             const categoryClass = (row_t1_class === colors.loss) ? colors.losingCategory : '';
 
             // Format for display
-            const display_t1_live = (category === 'SV%') ? t1_live_val.toFixed(3) : (isGaa && t1_live_val === Infinity) ? '0.00' : (typeof t1_live_val === 'number' ? t1_live_val.toFixed(2) : t1_live_val);
-            const display_t2_live = (category === 'SV%') ? t2_live_val.toFixed(3) : (isGaa && t2_live_val === Infinity) ? '0.00' : (typeof t2_live_val === 'number' ? t2_live_val.toFixed(2) : t2_live_val);
+            const display_t1_live = (category === 'SVpct') ? t1_live_val.toFixed(3) : (isGaa && t1_live_val === Infinity) ? '0.00' : (typeof t1_live_val === 'number' ? t1_live_val.toFixed(2) : t1_live_val);
+            const display_t2_live = (category === 'SVpct') ? t2_live_val.toFixed(3) : (isGaa && t2_live_val === Infinity) ? '0.00' : (typeof t2_live_val === 'number' ? t2_live_val.toFixed(2) : t2_live_val);
 
             tableHtml += `
                 <tr class="hover:bg-gray-700/50">

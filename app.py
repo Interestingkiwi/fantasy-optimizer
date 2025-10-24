@@ -679,7 +679,7 @@ def get_matchup_stats():
         all_categories_to_fetch = list(set(scoring_categories) | required_cats)
 
         # Categories to fetch from joined_player_stats (projections).
-        projection_cats = list(set(all_categories_to_fetch) - {'TOI/G', 'SV%'})
+        projection_cats = list(set(all_categories_to_fetch) - {'TOI/G', 'SVpct'})
 
         cursor.execute("SELECT position, position_count FROM lineup_settings WHERE position NOT IN ('BN', 'IR', 'IR+')")
         lineup_settings = {row['position']: row['position_count'] for row in cursor.fetchall()}
@@ -768,9 +768,9 @@ def get_matchup_stats():
             for cat, value in row_stats.items():
                 if cat == 'GAA':
                     row_stats[cat] = round(gaa, 2)
-                elif cat == 'SV%':
+                elif cat == 'SVpct':
                     row_stats[cat] = round(sv_pct, 3)
-                elif isinstance(value, (int, float)) and cat not in ['GAA', 'SV%']:
+                elif isinstance(value, (int, float)) and cat not in ['GAA', 'SVpct']:
                     row_stats[cat] = round(value, 1)
 
         # --- Calculate Unused Roster Spots for Team 1 ---
