@@ -1,0 +1,17 @@
+<div class="space-y-4">
+    <h2 class="text-xl font-bold text-white">Settings</h2>
+    <div class="p-4 bg-gray-700 rounded-lg">
+        <div class="flex items-center">
+            <input id="use-test-db-toggle" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 bg-gray-800">
+            <label for="use-test-db-toggle" class="ml-3 block text-sm font-medium text-gray-300">
+                Use Test Database
+            </label>
+        </div>
+        <p id="test-db-status" class="mt-2 text-xs text-gray-400">
+            When enabled, all data pages will read from the pre-loaded test database file from the repository (`server/yahoo-22705-Albany Hockey Hooligans Test.db`). <br>
+            The "League Database" page will still build and update new files in the ephemeral storage, separate from the test file.
+        </p>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='settings.js') }}"></script>

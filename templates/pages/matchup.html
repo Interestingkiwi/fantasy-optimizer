@@ -1,0 +1,30 @@
+<h2 class="text-xl font-bold text-white flex items-center">Matchups
+<span class="help-icon" data-title="Matchups Help" data-text="This page takes your rosters optimal (based on projections) lineup for each day of the fantasy week and calculates category totals for you and your opponent. ROW column calculates your projections from today through the end of the fantasy week, and combines that with the Live column. Live column data requires database updates to get updated numbers, so may not be up to date if DB is out of date. Unused Roster Spots shows the days of the week where you have open positions. A 0* means the optimal lineup has that position full but with a flexible position player who could move to another spot, so that position may still be available">?</span>
+</h2>
+<div id="matchup-container" class="space-y-4">
+    <div id="db-error-message" class="hidden bg-red-900 border border-red-700 text-red-200 px-4 py-3 rounded-lg" role="alert">
+        <p class="font-bold">Database Not Found!</p>
+        <p class="text-sm">Please go to the "League Database" page and initialize your league's data before using this feature.</p>
+    </div>
+
+    <div id="matchup-controls" class="space-y-4 md:space-y-0 md:flex md:items-end md:gap-4">
+        <div>
+            <label for="opponent-select" class="block mb-2 text-sm font-medium text-gray-300">Opponent</label>
+            <select id="opponent-select" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                <option selected>Loading Opponent...</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="flex justify-start gap-4">
+
+        <div id="table-container">
+            </div>
+
+        <div id="unused-roster-spots-container">
+            </div>
+
+    </div>
+    </div>
+
+<script src="{{ url_for('static', filename='matchup.js') }}"></script>

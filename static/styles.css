@@ -1,0 +1,90 @@
+/* Use Inter as the default font */
+body {
+    font-family: 'Inter', sans-serif;
+}
+
+/* Terminal Styles */
+.terminal, input.terminal { /* Target both divs and inputs with this class */
+    background-color: #1E1E1E;
+    color: #D4D4D4;
+    font-family: 'Courier New', Courier, monospace;
+    border: 1px solid #4a5568; /* Added a subtle border */
+}
+
+.terminal-output {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* Simple Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgb(0,0,0);
+    background-color: rgba(0,0,0,0.4);
+    padding-top: 60px;
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 5% auto;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 400px;
+    border-radius: 8px;
+    text-align: center;
+    position: relative;
+}
+
+.close-button {
+    color: #aaa;
+    position: absolute;
+    top: 10px;
+    right: 20px;
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.close-button:hover,
+.close-button:focus {
+    color: black;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.error-message {
+    color: #D8000C; /* Red for errors */
+    background-color: #FFD2D2;
+    border: 1px solid;
+    margin: 10px 0px;
+    padding: 15px 10px 15px 50px;
+    background-repeat: no-repeat;
+    background-position: 10px center;
+}
+
+.winner {
+    font-weight: bold;
+    background-color: #d4edda; /* A light green color */
+}
+
+/* Help Icon Styles */
+.help-icon {
+    cursor: pointer;
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    background-color: #4a5568;
+    color: white;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 20px;
+    font-weight: bold;
+    margin-left: 10px;
+}

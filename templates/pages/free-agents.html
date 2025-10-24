@@ -1,0 +1,33 @@
+<h2 class="text-xl font-bold text-white flex items-center">Free Agents
+<span class="help-icon" data-title="Free Agent help" data-text="This page shows available players on Waivers, and Free Agency, updated when db is updated, with last update timestamp shown on this page. The stat table shows a ranking of how that player projects in a given stat based on percentile of the league as a whole. A 1 in a category means they project to be in the top 5% of the league in that stat, a 20 indicates they are bottom 25%. If you see a player with no values, they currently do not have projections, DB Projections will be updated throughout the year to correct missing players. The checkboxes will adjust how the final ranking is determined. Unchecking any box will reduce the impact of that stat projection in the final ranking and ordering of free agents, uncheck any box for a stat that you are not concerned with for the given week to pinpoint players that better your category needs for the week. Unused Roster Spots shows the days of the week where you have open positions. A 0* means the optimal lineup has that position full but with a flexible position player who could move to another spot, so that position may still be available.">?</span>
+</h2>
+<p id="available-players-timestamp-text" class="text-sm text-gray-400 mb-4"></p>
+
+<div id="db-error-message" class="hidden bg-red-800 text-white p-4 rounded-lg mb-4">
+</div>
+
+<div id="controls-container" class="bg-gray-900 p-4 rounded-lg mb-4">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+        <div>
+            <label for="player-search" class="block text-sm font-medium text-gray-300">Search Player Name:</label>
+            <input type="text" id="player-search" class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+        </div>
+        <div id="category-checkboxes-container" class="md:col-span-2"></div>
+
+        <div class="md:col-span-3 flex justify-end">
+             <button id="recalculate-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">
+                Recalculate Ranks
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div id="waiver-players-container" class="lg:col-span-2"></div>
+
+    <div id="unused-roster-spots-container"></div>
+
+    <div id="free-agent-players-container" class="lg:col-span-3"></div>
+</div>
+
+<script src="{{ url_for('static', filename='free-agents.js') }}"></script>

@@ -1,0 +1,20 @@
+<h2 class="text-xl font-bold text-white flex items-center">Optimal Lineups
+<span class="help-icon" data-title="Lineups Help" data-text="This page shows your current roster (Up to date of the last time the DB was updated), along with the ideal lineups for each day of the week based on projected stats relevant to your league settings. Highlighted days of the week give a quick overview of what days that player is placed in the optimal lineups, and which days they are left on the bench. The stat table shows a ranking of how that player projects in a given stat based on percentile of the league as a whole. A 1 in a category means they project to be in the top 5% of the league in that stat, a 20 indicates they are bottom 25%. If you see a player with no values, they currently do not have projections, in some of these cases the lineups will flat out ignore them, so be sure to double check if that player seems excluded. DB Projections will be updated throughout the year to correct missing players. Unused Roster Spots shows the days of the week where you have open positions. A 0* means the optimal lineup has that position full but with a flexible position player who could move to another spot, so that position may still be available.">?</span>
+</h2>
+<div id="db-error-message" class="hidden bg-red-900 border border-red-700 text-red-200 px-4 py-3 rounded-lg" role="alert">
+    <p class="font-bold">Database Not Found!</p>
+    <p class="text-sm">Please go to the "League Database" page and initialize your league's data before using this feature.</p>
+</div>
+
+<div id="lineup-controls" class="hidden">
+    <div class="grid grid-cols-4 gap-4 mb-6">
+        <div id="roster-table-container" class="col-span-4">
+        </div>
+        <div id="optimal-lineup-container" class="col-span-3">
+        </div>
+        <div id="unused-roster-spots-container">
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='lineups.js') }}"></script>

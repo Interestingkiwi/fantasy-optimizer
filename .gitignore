@@ -6,9 +6,6 @@ __pycache__/
 .env
 venv/
 env/
-Gemini/
-archive/
-stg/
 
 # Credentials & Data (IMPORTANT)
 credentials.json

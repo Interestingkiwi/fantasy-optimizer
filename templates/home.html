@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home - H2H Fantasy Optimizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="bg-gray-900 text-white">
+
+    <div id="help-modal" class="modal">
+        <div class="modal-content bg-gray-800 text-white">
+            <span class="close-button">&times;</span>
+            <h2 id="modal-title" class="text-xl font-bold mb-2">Help</h2>
+            <p id="modal-text">If this is your first time here, please go to League Database and initialize a database for your league. Data collected is restricted to yahoo fantasy team information, and not personal yahoo account data. To see all data collected, you can go to the Download DB tab to get a copy of everything collected.</p>
+        </div>
+    </div>
+
+
+    <div class="p-4">
+        <div class="flex justify-between items-start mb-4">
+            <div class="flex items-center gap-4">
+                <h1 class="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+                    League Home
+                </h1>
+                <span class="help-icon" data-title="Help" data-text="If this is your first time here, please go to League Database and initialize a database for your league. Data collected is restricted to yahoo fantasy team information, and not personal yahoo account data. To see all data collected, you can go to the Download DB tab to get a copy of everything collected.">?</span>
+                <main class="bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 w-fit">
+                    <p id="timestamp-text" class="text-gray-400 text-xs">Loading league data...</p>
+                    <p class="text-gray-400 text-xs">Projection data is sourced by reddit user: <a href="https://www.reddit.com/r/fantasyhockey/comments/1n1wsqc/dtz_20252026_nhl_projections/" target="_blank" class="text-blue-400 hover:underline">Datsyuktozetterberg</a></p>
+                </main>
+                <div id="dropdown-container" class="flex items-center gap-4">
+                      <div class="flex items-center gap-2">
+                          <label for="week-select" class="text-sm font-medium text-gray-300">Fantasy Week:</label>
+                          <select id="week-select" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                              <option selected>Choose a week</option>
+                          </select>
+                      </div>
+                      <div class="flex items-center gap-2">
+                          <label for="your-team-select" class="text-sm font-medium text-gray-300">Your Team:</label>
+                          <select id="your-team-select" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                              <option selected>Choose your team</option>
+                          </select>
+                      </div>
+                </div>
+            </div>
+
+            <button id="logout-button" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out">
+                Logout
+            </button>
+        </div>
+
+        <div id="toggle-buttons-container" class="flex items-center gap-2 mb-4">
+            <button data-page="league-database" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                League Database
+            </button>
+            <button data-page="matchup" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                Matchup
+            </button>
+            <button data-page="lineups" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                Lineups
+            </button>
+            <button data-page="free-agents" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                Free Agents
+            </button>
+            <button data-page="goalie-planning" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                Goalie Planning
+            </button>
+<!--
+            <button data-page="league-data" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                YFPY League Data Query
+            </button>
+            <button data-page="league-data-yfa" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                YFA League Data Query
+            </button>
+            <button data-page="settings" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                Settings
+            </button>
+-->
+            <script>
+                const isDevelopment = true; // Set to false for production
+                if (isDevelopment) {
+                    document.write(`
+                        <button data-page="db" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                            Download DB
+                        </button>
+                    `);
+                }
+            </script>
+        </div>
+
+        <div id="page-content" class="bg-gray-800 border border-gray-700 rounded-lg p-4 min-h-[60vh]">
+            </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='home.js') }}"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const pageContent = document.getElementById('page-content');
+            let currentPageScript = null; // Keep track of the current page's script
+
+            // Define the classes for each state
+            const activeClasses = ['bg-blue-600', 'text-white'];
+            const inactiveClasses = ['bg-gray-700', 'text-gray-300', 'hover:bg-gray-600'];
+
+            function setButtonState(button, isActive) {
+                if (isActive) {
+                    button.classList.remove(...inactiveClasses);
+                    button.classList.add(...activeClasses);
+                } else {
+                    button.classList.remove(...activeClasses);
+                    button.classList.add(...inactiveClasses);
+                }
+            }
+
+            async function loadPage(pageName) {
+                try {
+                    // Remove the old page's script to prevent duplicate event listeners
+                    if (currentPageScript) {
+                        currentPageScript.remove();
+                        currentPageScript = null;
+                    }
+
+                    // Add a loading state
+                    pageContent.innerHTML = `<p class="text-gray-400">Loading ${pageName.replace(/-/g, ' ')}...</p>`;
+
+                    const response = await fetch(`/pages/${pageName}.html`);
+                    if (!response.ok) {
+                        throw new Error(`Page not found: ${pageName}.html`);
+                    }
+                    const content = await response.text();
+                    pageContent.innerHTML = content;
+
+                    // After setting the innerHTML, find and execute the script
+                    const scriptElement = pageContent.querySelector('script');
+                    if (scriptElement) {
+                        const newScript = document.createElement('script');
+                        if (scriptElement.src) {
+                            newScript.src = scriptElement.src;
+                            newScript.onload = () => console.log(`${pageName}.js loaded from src`);
+                            document.body.appendChild(newScript);
+                        } else {
+                            newScript.textContent = scriptElement.textContent; // Use textContent for security
+                            document.body.appendChild(newScript);
+                        }
+                        currentPageScript = newScript; // Store the new script
+                        scriptElement.remove(); // Remove the original script from the page content
+                    }
+
+                } catch (error) {
+                    console.error('Error loading page:', error);
+                    pageContent.innerHTML = `<p class="text-red-400">Error loading page content. Check the console for details.</p>`;
+                }
+            }
+
+            // This needs to be done inside DOMContentLoaded to ensure all buttons exist
+            const allToggleButtons = document.querySelectorAll('.toggle-btn');
+
+            allToggleButtons.forEach((button) => {
+                button.addEventListener('click', () => {
+                    const pageToLoad = button.getAttribute('data-page');
+
+                    // Set all buttons to inactive first
+                    allToggleButtons.forEach(btn => setButtonState(btn, false));
+
+                    // Then set the clicked button to active
+                    setButtonState(button, true);
+
+                    // Load the page content
+                    loadPage(pageToLoad);
+                });
+            });
+
+            // Initial load
+            const firstButton = allToggleButtons[0];
+            if (firstButton) {
+                allToggleButtons.forEach((btn, index) => {
+                    setButtonState(btn, index === 0);
+                });
+                loadPage(firstButton.getAttribute('data-page'));
+            }
+
+            // Modal script
+            const modal = document.getElementById('help-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalText = document.getElementById('modal-text');
+            const closeButton = document.querySelector('.close-button');
+
+            // Function to open the modal with specific content
+            function openModal(title, text) {
+                modalTitle.textContent = title;
+                modalText.textContent = text;
+                modal.style.display = 'block';
+            }
+
+            // Close the modal
+            closeButton.onclick = () => {
+                modal.style.display = 'none';
+            }
+
+            window.onclick = (event) => {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            }
+
+            // Attach event listener to a parent element (delegation)
+            document.body.addEventListener('click', (event) => {
+                if (event.target.classList.contains('help-icon')) {
+                    const title = event.target.dataset.title || 'Help';
+                    const text = event.target.dataset.text || 'Placeholder help text.';
+                    openModal(title, text);
+                }
+            });
+        });
+    </script>
+</body>
+</html>

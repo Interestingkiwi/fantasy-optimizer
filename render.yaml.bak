@@ -1,0 +1,27 @@
+# Configuration for hosting on Render.com
+# You can connect your GitHub repository and Render will
+# use this file to automatically configure the service.
+services:
+  - type: web
+    name: fantasystreams
+    # Use python as the runtime environment
+    env: python
+    # The 'free' plan is suitable for personal projects.
+    # See Render's pricing for other options.
+    plan: free
+    # The branch to deploy from your repository
+    branch: main
+    # Command to install dependencies
+    buildCommand: "pip install -r requirements.txt"
+    # Command to start the web server, with an increased timeout of 120 seconds
+    startCommand: "gunicorn --timeout 120 'app:app'"
+    # Environment variables that need to be set in the Render dashboard
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      - key: YAHOO_CONSUMER_KEY
+        sync: false
+      - key: YAHOO_CONSUMER_SECRET
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true # Render will generate a secret key for you
