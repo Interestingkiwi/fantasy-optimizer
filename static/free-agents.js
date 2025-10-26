@@ -139,8 +139,21 @@
         }
     }
 
+    /**
+     * MODIFIED FUNCTION
+     * Adds Check All and Uncheck All buttons
+     */
     function renderCategoryCheckboxes() {
-        let checkboxHtml = '<label class="block text-sm font-medium text-gray-300 mb-2">Recalculate Rank Based On:</label><div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">';
+        let checkboxHtml = `
+            <div class="flex justify-between items-center mb-2">
+                <label class="block text-sm font-medium text-gray-300">Recalculate Rank Based On:</label>
+                <div>
+                    <button id="check-all-btn" class="text-xs bg-gray-600 hover:bg-gray-500 text-white py-1 px-2 rounded mr-2 transition-colors duration-150">Check All</button>
+                    <button id="uncheck-all-btn" class="text-xs bg-gray-600 hover:bg-gray-500 text-white py-1 px-2 rounded transition-colors duration-150">Uncheck All</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+        `;
         allScoringCategories.forEach(cat => {
             const isChecked = checkedCategories.includes(cat);
             checkboxHtml += `
@@ -288,12 +301,12 @@
             tableHtml += `<tr class="hover:bg-gray-700/50">
                 <td class="px-2 py-1 whitespace-nowrap text-sm font-medium text-gray-300">${day}</td>`;
             positionOrder.forEach(pos => {
-              const value = unusedSpotsData[day][pos];
-              const stringValue = String(value);
+            const value = unusedSpotsData[day][pos];
+            const stringValue = String(value);
 
-              const highlightClass = (stringValue !== '0')
-                  ? 'bg-green-200 text-gray-900'
-                  : 'text-gray-300';
+            const highlightClass = (stringValue !== '0')
+                ? 'bg-green-200 text-gray-900'
+                : 'text-gray-300';
 
                 tableHtml += `<td class="px-2 py-1 whitespace-nowrap text-sm text-center ${highlightClass}">${value}</td>`;
             });
@@ -303,12 +316,33 @@
         unusedRosterSpotsContainer.innerHTML = tableHtml;
     }
 
+    /**
+     * MODIFIED FUNCTION
+     * Adds event delegation for the new Check All/Uncheck All buttons.
+     */
     function setupEventListeners() {
         playerSearchInput.addEventListener('input', () => {
             filterAndSortPlayers();
             saveStateToCache();
         });
         recalculateButton.addEventListener('click', handleRecalculateClick);
+
+        // Event delegation for dynamically added category buttons
+        checkboxesContainer.addEventListener('click', (e) => {
+            const setAllCheckboxes = (checkedState) => {
+                const checkboxes = checkboxesContainer.querySelectorAll('input[name="category"]');
+                checkboxes.forEach(cb => {
+                    cb.checked = checkedState;
+                });
+            };
+
+            if (e.target.id === 'check-all-btn') {
+                setAllCheckboxes(true);
+            } else if (e.target.id === 'uncheck-all-btn') {
+                setAllCheckboxes(false);
+            }
+        });
+
         const yourTeamSelect = document.getElementById('your-team-select');
         if (yourTeamSelect) {
             yourTeamSelect.addEventListener('change', () => {

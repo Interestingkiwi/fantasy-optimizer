@@ -146,12 +146,11 @@ class DBFinalizer:
                 logging.info("Detaching projections database.")
                 self.con.execute("DETACH DATABASE projections")
 
-    def parse_and_store_player_stats(self):
+def parse_and_store_player_stats(self):
         """
-        Parses raw player data from 'daily_lineups_dump', enriches it with
-        additional details, calculates missing goalie stats (TOI/G) when
-        possible, and stores the structured stats in a new 'daily_player_stats'
-        table.
+        Parses raw player data from 'daily_lineups_dump' for dates not already
+        processed, enriches it, calculates missing goalie stats (TOI/G), and
+        stores the structured stats in 'daily_player_stats'.
         """
         if not self.con:
             logging.error("No database connection for finalizer.")
@@ -159,29 +158,13 @@ class DBFinalizer:
 
         cursor = self.con.cursor()
 
-        # Check if the source table exists before proceeding
+        # Check if the source table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_lineups_dump'")
         if cursor.fetchone() is None:
             logging.info("Table 'daily_lineups_dump' does not exist. Skipping stat parsing.")
             return
 
-        logging.info("Parsing raw player strings and storing daily stats...")
-
-        # Create a mapping for stat IDs to their category names.
-        stat_map = {
-            1: 'G', 2: 'A', 3: 'P', 4: '+/-', 5: 'PIM', 6: 'PPG', 7: 'PPA', 8: 'PPP',
-            9: 'SHG', 10: 'SHA', 11: 'SHP', 12: 'GWG', 13: 'GTG', 14: 'SOG', 15: 'SH%',
-            16: 'FW', 17: 'FL', 31: 'HIT', 32: 'BLK', 18: 'GS', 19: 'W', 20: 'L',
-            22: 'GA', 23: 'GAA', 24: 'SA', 25: 'SV', 26: 'SV%', 27: 'SHO', 28: 'TOI/G',
-            29: 'GP/S', 30: 'GP/G', 33: 'TOI/S', 34: 'TOI/S/Gm'
-        }
-
-        # Fetch player normalized names into a dictionary for quick lookup
-        cursor.execute("SELECT player_id, player_name_normalized FROM players")
-        player_norm_name_map = dict(cursor.fetchall())
-        logging.info(f"Loaded {len(player_norm_name_map)} players for name normalization lookup.")
-
-        # Create the new table for structured daily stats
+        # Create the target table if it doesn't exist yet
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS daily_player_stats (
                 date_ TEXT NOT NULL,
@@ -195,121 +178,37 @@ class DBFinalizer:
                 PRIMARY KEY (date_, player_id, stat_id)
             );
         """)
+        self.con.commit() # Commit table creation if it happened
 
-        # Fetch all data from the dump table
-        cursor.execute("SELECT * FROM daily_lineups_dump")
-        all_lineups = cursor.fetchall()
+        # --- OPTIMIZATION START ---
+        # Find the last date already processed in daily_player_stats
+        cursor.execute("SELECT MAX(date_) FROM daily_player_stats")
+        max_processed_date_result = cursor.fetchone()
+        last_processed_date = max_processed_date_result[0] if max_processed_date_result else None
 
-        # Get column names to correctly map the data
-        column_names = [description[0] for description in cursor.description]
-
-        stats_to_insert = []
-        player_string_pattern = re.compile(r"ID: (\d+), Name: .*, Stats: (\[.*\])")
-        pos_pattern = re.compile(r"([a-zA-Z]+)")
-
-        # Define the active roster slots to parse for stats
-        active_roster_columns = ['c1', 'c2', 'l1', 'l2', 'r1', 'r2', 'd1', 'd2', 'd3', 'd4', 'g1', 'g2']
-
-        for row in all_lineups:
-            row_dict = dict(zip(column_names, row))
-            date_ = row_dict['date_']
-            team_id = row_dict['team_id']
-
-            # Iterate only through active player columns
-            for col in active_roster_columns:
-                # Ensure column exists and has a player string
-                if col in row_dict and row_dict[col]:
-                    player_string = row_dict[col]
-                    match = player_string_pattern.match(player_string)
-                    if match:
-                        player_id = int(match.group(1))
-                        stats_list_str = match.group(2)
-
-                        # Get lineup position from column name ('c1' -> 'c', 'lw2' -> 'lw')
-                        pos_match = pos_pattern.match(col)
-                        lineup_pos = pos_match.group(1) if pos_match else None
-
-                        # Get player's normalized name from the lookup map
-                        player_name_normalized = player_norm_name_map.get(str(player_id))
-
-                        try:
-                            # Safely evaluate the string representation of the list
-                            stats_list = ast.literal_eval(stats_list_str)
-
-                            # --- START: New Logic for Calculating Stat 28 ---
-
-                            # Store the player's stats in a dictionary for easy lookup
-                            player_stats = dict(stats_list)
-
-                            # Check if the player is a goalie ('g') and if the required stats exist
-                            if (lineup_pos == 'g' and
-                                22 in player_stats and  # GA exists
-                                23 in player_stats and  # GAA exists
-                                28 not in player_stats): # TOI/G does NOT exist
-
-                                val_22_ga = player_stats[22]
-                                val_23_gaa = player_stats[23]
-
-                                # Avoid a ZeroDivisionError if GAA is 0
-                                if val_23_gaa > 0:
-                                    # Calculate TOI/G using the derived formula
-                                    val_28_toi = (val_22_ga / val_23_gaa) * 60
-                                    player_stats[28] = round(val_28_toi, 2) # Add new stat to the dict
-                                    logging.info(f"Calculated stat 28 (TOI/G={val_28_toi:.2f}) for goalie ID {player_id} on {date_}.")
-
-                            # Add all stats for this player (including the new one) to the main list
-                            for stat_id, stat_value in player_stats.items():
-                                category = stat_map.get(stat_id, 'UNKNOWN')
-                                stats_to_insert.append((
-                                    date_,
-                                    team_id,
-                                    player_id,
-                                    player_name_normalized,
-                                    lineup_pos,
-                                    stat_id,
-                                    category,
-                                    stat_value
-                                ))
-
-                            # --- END: New Logic ---
-
-                        except (ValueError, SyntaxError) as e:
-                            logging.warning(f"Could not parse stats for player {player_id} on {date_}: {e}")
-
-        if stats_to_insert:
-            logging.info(f"Found {len(stats_to_insert)} individual stat entries to insert/update.")
-            cursor.executemany("""
-                INSERT OR IGNORE INTO daily_player_stats (
-                    date_, team_id, player_id, player_name_normalized, lineup_pos,
-                    stat_id, category, stat_value
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, stats_to_insert)
-            self.con.commit()
-            logging.info("Successfully stored parsed player stats.")
+        # Determine the query and parameters for fetching unprocessed data
+        if last_processed_date:
+            logging.info(f"Parsing daily stats: Resuming from date after {last_processed_date}")
+            dump_query = "SELECT * FROM daily_lineups_dump WHERE date_ > ?"
+            query_params = (last_processed_date,)
         else:
-            logging.info("No new player stats to parse.")
+            logging.info("Parsing daily stats: Processing all dates from dump table.")
+            dump_query = "SELECT * FROM daily_lineups_dump"
+            query_params = ()
 
-    def parse_and_store_bench_stats(self):
-        """
-        Parses raw player data from 'daily_lineups_dump', enriches it with
-        additional details, and stores the structured stats in a new
-        'daily_bench_stats' table.
-        """
-        if not self.con:
-            logging.error("No database connection for finalizer.")
+        # Fetch only the necessary data from the dump table
+        cursor.execute(dump_query, query_params)
+        all_lineups = cursor.fetchall()
+        # --- OPTIMIZATION END ---
+
+
+        if not all_lineups:
+            logging.info("No new dates found in daily_lineups_dump to process for daily_player_stats.")
             return
 
-        cursor = self.con.cursor()
+        logging.info(f"Parsing raw player strings for {len(all_lineups)} new/updated rows...")
 
-        # Check if the source table exists before proceeding
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_lineups_dump'")
-        if cursor.fetchone() is None:
-            logging.info("Table 'daily_lineups_dump' does not exist. Skipping stat parsing.")
-            return
-
-        logging.info("Parsing raw bench player strings and storing daily stats...")
-
+        # (Rest of the function remains the same as before)
         # Create a mapping for stat IDs to their category names.
         stat_map = {
             1: 'G', 2: 'A', 3: 'P', 4: '+/-', 5: 'PIM', 6: 'PPG', 7: 'PPA', 8: 'PPP',
@@ -324,7 +223,93 @@ class DBFinalizer:
         player_norm_name_map = dict(cursor.fetchall())
         logging.info(f"Loaded {len(player_norm_name_map)} players for name normalization lookup.")
 
-        # Create the new table for structured daily stats
+
+        # Get column names to correctly map the data
+        # Note: We fetch column names *after* executing the dump_query
+        column_names = [description[0] for description in cursor.description]
+
+        stats_to_insert = []
+        player_string_pattern = re.compile(r"ID: (\d+), Name: .*, Stats: (\[.*\])")
+        pos_pattern = re.compile(r"([a-zA-Z]+)")
+
+        # Define the active roster slots to parse for stats
+        active_roster_columns = ['c1', 'c2', 'l1', 'l2', 'r1', 'r2', 'd1', 'd2', 'd3', 'd4', 'g1', 'g2']
+
+        for row in all_lineups: # Now iterating only over new/updated rows
+            row_dict = dict(zip(column_names, row))
+            date_ = row_dict['date_']
+            team_id = row_dict['team_id']
+
+            for col in active_roster_columns:
+                if col in row_dict and row_dict[col]:
+                    player_string = row_dict[col]
+                    match = player_string_pattern.match(player_string)
+                    if match:
+                        player_id = int(match.group(1))
+                        stats_list_str = match.group(2)
+                        pos_match = pos_pattern.match(col)
+                        lineup_pos = pos_match.group(1) if pos_match else None
+                        player_name_normalized = player_norm_name_map.get(str(player_id))
+
+                        try:
+                            stats_list = ast.literal_eval(stats_list_str)
+                            player_stats = dict(stats_list)
+
+                            # Calculate TOI/G for goalies if needed
+                            if (lineup_pos == 'g' and
+                                22 in player_stats and 23 in player_stats):
+                                val_22_ga = player_stats[22]
+                                val_23_gaa = player_stats[23]
+                                if val_23_gaa > 0:
+                                    # Calculate and add/overwrite stat 28
+                                    val_28_toi = (val_22_ga / val_23_gaa) * 60
+                                    player_stats[28] = round(val_28_toi, 2)
+                                    # Removed logging here for brevity during bulk processing
+
+                            # Prepare all stats for insertion
+                            for stat_id, stat_value in player_stats.items():
+                                category = stat_map.get(stat_id, 'UNKNOWN')
+                                stats_to_insert.append((
+                                    date_, team_id, player_id, player_name_normalized,
+                                    lineup_pos, stat_id, category, stat_value
+                                ))
+                        except (ValueError, SyntaxError) as e:
+                            logging.warning(f"Could not parse stats for player {player_id} on {date_} in daily_player_stats: {e}")
+
+        if stats_to_insert:
+            logging.info(f"Found {len(stats_to_insert)} individual stat entries to insert/ignore into daily_player_stats.")
+            cursor.executemany("""
+                INSERT OR IGNORE INTO daily_player_stats (
+                    date_, team_id, player_id, player_name_normalized, lineup_pos,
+                    stat_id, category, stat_value
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, stats_to_insert)
+            self.con.commit()
+            logging.info("Successfully stored/ignored parsed player stats in daily_player_stats.")
+        else:
+            logging.info("No new player stats to insert into daily_player_stats.")
+
+
+def parse_and_store_bench_stats(self):
+        """
+        Parses raw player data from 'daily_lineups_dump' for dates not already
+        processed, enriches it, calculates missing goalie stats (TOI/G) for bench players,
+        and stores the structured stats in 'daily_bench_stats'.
+        """
+        if not self.con:
+            logging.error("No database connection for finalizer.")
+            return
+
+        cursor = self.con.cursor()
+
+        # Check if the source table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_lineups_dump'")
+        if cursor.fetchone() is None:
+            logging.info("Table 'daily_lineups_dump' does not exist. Skipping bench stat parsing.")
+            return
+
+        # Create the target table if it doesn't exist yet
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS daily_bench_stats (
                 date_ TEXT NOT NULL,
@@ -338,10 +323,52 @@ class DBFinalizer:
                 PRIMARY KEY (date_, player_id, stat_id)
             );
         """)
+        self.con.commit() # Commit table creation if it happened
 
-        # Fetch all data from the dump table
-        cursor.execute("SELECT * FROM daily_lineups_dump")
+        # --- OPTIMIZATION START ---
+        # Find the last date already processed in daily_bench_stats
+        cursor.execute("SELECT MAX(date_) FROM daily_bench_stats")
+        max_processed_date_result = cursor.fetchone()
+        last_processed_date = max_processed_date_result[0] if max_processed_date_result else None
+
+        # Determine the query and parameters for fetching unprocessed data
+        if last_processed_date:
+            logging.info(f"Parsing bench stats: Resuming from date after {last_processed_date}")
+            dump_query = "SELECT * FROM daily_lineups_dump WHERE date_ > ?"
+            query_params = (last_processed_date,)
+        else:
+            logging.info("Parsing bench stats: Processing all dates from dump table.")
+            dump_query = "SELECT * FROM daily_lineups_dump"
+            query_params = ()
+
+        # Fetch only the necessary data from the dump table
+        cursor.execute(dump_query, query_params)
         all_lineups = cursor.fetchall()
+        # --- OPTIMIZATION END ---
+
+
+        if not all_lineups:
+            logging.info("No new dates found in daily_lineups_dump to process for daily_bench_stats.")
+            return
+
+        logging.info(f"Parsing raw bench player strings for {len(all_lineups)} new/updated rows...")
+
+
+        # (Rest of the function remains the same as before)
+        # Create a mapping for stat IDs to their category names.
+        stat_map = {
+            1: 'G', 2: 'A', 3: 'P', 4: '+/-', 5: 'PIM', 6: 'PPG', 7: 'PPA', 8: 'PPP',
+            9: 'SHG', 10: 'SHA', 11: 'SHP', 12: 'GWG', 13: 'GTG', 14: 'SOG', 15: 'SH%',
+            16: 'FW', 17: 'FL', 31: 'HIT', 32: 'BLK', 18: 'GS', 19: 'W', 20: 'L',
+            22: 'GA', 23: 'GAA', 24: 'SA', 25: 'SV', 26: 'SV%', 27: 'SHO', 28: 'TOI/G',
+            29: 'GP/S', 30: 'GP/G', 33: 'TOI/S', 34: 'TOI/S/Gm'
+        }
+
+        # Fetch player normalized names into a dictionary for quick lookup
+        cursor.execute("SELECT player_id, player_name_normalized FROM players")
+        player_norm_name_map = dict(cursor.fetchall())
+        logging.info(f"Loaded {len(player_norm_name_map)} players for name normalization lookup.")
+
 
         # Get column names to correctly map the data
         column_names = [description[0] for description in cursor.description]
@@ -351,77 +378,53 @@ class DBFinalizer:
         pos_pattern = re.compile(r"([a-zA-Z]+)")
 
         # Define the bench and injured roster slots to parse for stats
-        active_roster_columns = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9',
+        bench_roster_columns = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9',
                                  'b10', 'b11', 'b12', 'b13', 'b14', 'b15', 'b16', 'b17', 'b18', 'b19',
                                  'i1', 'i2', 'i3', 'i4', 'i5']
 
-        for row in all_lineups:
+        for row in all_lineups: # Now iterating only over new/updated rows
             row_dict = dict(zip(column_names, row))
             date_ = row_dict['date_']
             team_id = row_dict['team_id']
 
-            # Iterate only through active player columns
-            for col in active_roster_columns:
-                # Ensure column exists and has a player string
+
+            for col in bench_roster_columns: # Use bench columns
                 if col in row_dict and row_dict[col]:
                     player_string = row_dict[col]
                     match = player_string_pattern.match(player_string)
                     if match:
                         player_id = int(match.group(1))
                         stats_list_str = match.group(2)
-
-                        # Get lineup position from column name ('b1' -> 'b', 'i2' -> 'i')
                         pos_match = pos_pattern.match(col)
                         lineup_pos = pos_match.group(1) if pos_match else None
-
-                        # Get player's normalized name from the lookup map
                         player_name_normalized = player_norm_name_map.get(str(player_id))
 
                         try:
-                            # Safely evaluate the string representation of the list
                             stats_list = ast.literal_eval(stats_list_str)
-
-                            # --- START: New Logic for Calculating Stat 28 ---
-
-                            # Store the player's stats in a dictionary for easy lookup
                             player_stats = dict(stats_list)
 
-                            # Check if the required goalie stats exist to calculate TOI/G
-                            if (22 in player_stats and    # GA exists
-                                23 in player_stats and    # GAA exists
-                                28 not in player_stats):  # TOI/G does NOT exist
-
+                            # Calculate TOI/G for goalies if needed (even if benched/IR)
+                            # Assuming goalie eligibility isn't solely based on 'g1'/'g2' slot
+                            if (22 in player_stats and 23 in player_stats):
                                 val_22_ga = player_stats[22]
                                 val_23_gaa = player_stats[23]
-
-                                # Avoid a ZeroDivisionError if GAA is 0
                                 if val_23_gaa > 0:
-                                    # Calculate TOI/G using the formula: x = (GA / GAA) * 60
                                     val_28_toi = (val_22_ga / val_23_gaa) * 60
-                                    player_stats[28] = round(val_28_toi, 2) # Add new stat to the dict
-                                    logging.info(f"Calculated bench stat 28 (TOI/G={val_28_toi:.2f}) for player ID {player_id} on {date_}.")
+                                    player_stats[28] = round(val_28_toi, 2)
+                                    # Removed logging here
 
-                            # Add all stats for this player (including the new one) to the main list
                             for stat_id, stat_value in player_stats.items():
                                 category = stat_map.get(stat_id, 'UNKNOWN')
                                 stats_to_insert.append((
-                                    date_,
-                                    team_id,
-                                    player_id,
-                                    player_name_normalized,
-                                    lineup_pos,
-                                    stat_id,
-                                    category,
-                                    stat_value
+                                    date_, team_id, player_id, player_name_normalized,
+                                    lineup_pos, stat_id, category, stat_value
                                 ))
-
-                            # --- END: New Logic ---
-
                         except (ValueError, SyntaxError) as e:
-                            logging.warning(f"Could not parse stats for player {player_id} on {date_}: {e}")
+                             logging.warning(f"Could not parse stats for player {player_id} on {date_} in daily_bench_stats: {e}")
+
 
         if stats_to_insert:
-            logging.info(f"Found {len(stats_to_insert)} individual bench stat entries to insert/update.")
+            logging.info(f"Found {len(stats_to_insert)} individual bench stat entries to insert/ignore into daily_bench_stats.")
             cursor.executemany("""
                 INSERT OR IGNORE INTO daily_bench_stats (
                     date_, team_id, player_id, player_name_normalized, lineup_pos,
@@ -430,10 +433,9 @@ class DBFinalizer:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, stats_to_insert)
             self.con.commit()
-            logging.info("Successfully stored parsed bench player stats.")
+            logging.info("Successfully stored/ignored parsed bench player stats in daily_bench_stats.")
         else:
-            logging.info("No new bench player stats to parse.")
-
+            logging.info("No new bench player stats to insert into daily_bench_stats.")
 
 
 def _create_tables(cursor):
