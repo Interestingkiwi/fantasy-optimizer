@@ -146,7 +146,7 @@ class DBFinalizer:
                 logging.info("Detaching projections database.")
                 self.con.execute("DETACH DATABASE projections")
 
-def parse_and_store_player_stats(self):
+    def parse_and_store_player_stats(self):
         """
         Parses raw player data from 'daily_lineups_dump' for dates not already
         processed, enriches it, calculates missing goalie stats (TOI/G), and
@@ -291,7 +291,7 @@ def parse_and_store_player_stats(self):
             logging.info("No new player stats to insert into daily_player_stats.")
 
 
-def parse_and_store_bench_stats(self):
+    def parse_and_store_bench_stats(self):
         """
         Parses raw player data from 'daily_lineups_dump' for dates not already
         processed, enriches it, calculates missing goalie stats (TOI/G) for bench players,
