@@ -33,7 +33,7 @@ import threading
 
 # --- Flask App Configuration ---
 # Assume a 'data' directory exists for storing database files
-DATA_DIR = '/var/data/dbs'
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
@@ -702,9 +702,30 @@ def get_matchup_stats():
         }
 
         for row in live_stats_decoded:
-            team_key = 'team1' if str(row['team_id']) == str(team1_id) else 'team2'
-            if row['category'] in all_categories_to_fetch:
-                stats[team_key]['live'][row['category']] = row.get('total', 0)
+          team_key = 'team1' if str(row['team_id']) == str(team1_id) else 'team2'
+          if row['category'] in all_categories_to_fetch:
+              stats[team_key]['live'][row['category']] = row.get('total', 0)
+
+      # --- [START] NEW BLOCK: Calculate Live Derived Stats & Apply SHO Fix ---
+        for team_key in ['team1', 'team2']:
+          live_stats = stats[team_key]['live']
+
+          # Apply TOI/G fix for shutouts
+          # This assumes daily_player_stats stores 0 TOI/G for shutouts,
+          # but does store 1.0 for the SHO category itself.
+          if 'SHO' in live_stats and live_stats['SHO'] > 0:
+              # live_stats['SHO'] is the SUM of shutouts (e.g., 2.0)
+              # We add 60 minutes to TOI/G for *each* shutout.
+              live_stats['TOI/G'] += (live_stats['SHO'] * 60)
+
+          # Re-calculate live GAA and SVpct based on summed components
+          # The values from the DB are just sums of daily GAA/SVpct, which is incorrect.
+          if 'GAA' in live_stats:
+              live_stats['GAA'] = (live_stats.get('GA', 0) * 60) / live_stats['TOI/G'] if live_stats.get('TOI/G', 0) > 0 else 0
+
+          if 'SVpct' in live_stats:
+              live_stats['SVpct'] = live_stats.get('SV', 0) / live_stats['SA'] if live_stats.get('SA', 0) > 0 else 0
+              # --- [END] NEW BLOCK ---
 
         # --- Calculate ROW (Rest of Week) Stats ---
         stats['team1']['row'] = copy.deepcopy(stats['team1']['live'])
@@ -1083,14 +1104,15 @@ def stream():
             yield f"data: {message}\n\n"
     return Response(event_stream(), mimetype='text/event-stream')
 
-def update_db_in_background(yq, lg, league_id, data_dir, capture_lineups, skip_static_info, skip_available_players):
+#def update_db_in_background(yq, lg, league_id, data_dir, capture_lineups, skip_static_info, skip_available_players):
+def update_db_in_background(yq, lg, league_id, data_dir, capture_lineups):
     """Function to run in a separate thread."""
     try:
         db_builder.update_league_db(
             yq, lg, league_id, data_dir,
-            capture_lineups=capture_lineups,
-            skip_static_info=skip_static_info,
-            skip_available_players=skip_available_players
+            capture_lineups=capture_lineups#,
+#            skip_static_info=skip_static_info,
+#            skip_available_players=skip_available_players
         )
         log_queue.put("SUCCESS: Database update complete.")
     except Exception as e:
@@ -1113,13 +1135,13 @@ def update_db_route():
 
     data = request.get_json() or {}
     capture_lineups = data.get('capture_lineups', False)
-    skip_static_info = data.get('skip_static_info', False)
-    skip_available_players = data.get('skip_available_players', False)
+#    skip_static_info = data.get('skip_static_info', False)
+#    skip_available_players = data.get('skip_available_players', False)
 
     # Run the database update in a background thread
     thread = threading.Thread(
         target=update_db_in_background,
-        args=(yq, lg, league_id, DATA_DIR, capture_lineups, skip_static_info, skip_available_players)
+        args=(yq, lg, league_id, DATA_DIR, capture_lineups)#, skip_static_info, skip_available_players)
     )
     thread.start()
 

@@ -460,59 +460,54 @@ def _create_tables(cursor):
             manager_nickname TEXT
         )
     ''')
+
     #daily_lineups_dump
+    # This version is cleaned of any invisible characters and
+    # uses the correct (date_, team_id) Primary Key.
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_lineups_dump (
-          lineup_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          date_ TEXT NOT NULL,
-          team_id INTEGER NOT NULL,
-          c1 TEXT,
-          c2 TEXT,
-          l1 TEXT,
-          l2 TEXT,
-          r1 TEXT,
-          r2 TEXT,
-          d1 TEXT,
-          d2 TEXT,
-          d3 TEXT,
-          d4 TEXT,
-          g1 TEXT,
-          g2 TEXT,
-          b1 TEXT,
-          b2 TEXT,
-          b3 TEXT,
-          b4 TEXT,
-          b5 TEXT,
-          b6 TEXT,
-          b7 TEXT,
-          b8 TEXT,
-          b9 TEXT,
-          b10 TEXT,
-          b11 TEXT,
-          b12 TEXT,
-          b13 TEXT,
-          b14 TEXT,
-          b15 TEXT,
-          b16 TEXT,
-          b17 TEXT,
-          b18 TEXT,
-          b19 TEXT,
-          i1 TEXT,
-          i2 TEXT,
-          i3 TEXT,
-          i4 TEXT,
-          i5 TEXT
+            date_ TEXT NOT NULL,
+            team_id INTEGER NOT NULL,
+            c1 TEXT,
+            c2 TEXT,
+            l1 TEXT,
+            l2 TEXT,
+            r1 TEXT,
+            r2 TEXT,
+            d1 TEXT,
+            d2 TEXT,
+            d3 TEXT,
+            d4 TEXT,
+            g1 TEXT,
+            g2 TEXT,
+            b1 TEXT,
+            b2 TEXT,
+            b3 TEXT,
+            b4 TEXT,
+            b5 TEXT,
+            b6 TEXT,
+            b7 TEXT,
+            b8 TEXT,
+            b9 TEXT,
+            b10 TEXT,
+            b11 TEXT,
+            b12 TEXT,
+            b13 TEXT,
+            b14 TEXT,
+            b15 TEXT,
+            b16 TEXT,
+            b17 TEXT,
+            b18 TEXT,
+            b19 TEXT,
+            i1 TEXT,
+            i2 TEXT,
+            i3 TEXT,
+            i4 TEXT,
+            i5 TEXT,
+            PRIMARY KEY (date_, team_id)
         )
     ''')
-    #players - will be imported from static db later
-#    cursor.execute('''
-#        CREATE TABLE IF NOT EXISTS players (
-#            player_id TEXT NOT NULL UNIQUE,
-#            player_name TEXT NOT NULL,
-#            player_team TEXT,
-#            player_name_normalized TEXT NOT NULL
-#        )
-#    ''')
+
     #scoring
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS scoring (
@@ -609,7 +604,6 @@ def _create_tables(cursor):
             value TEXT
         )
     ''')
-
 
 def _update_league_info(yq, cursor, league_id, league_name, league_metadata):
     """
@@ -718,7 +712,7 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
             # CHECKED: full history from league start or last entry
             start_date_for_fetch = league_start_date
             if last_fetch_date_plus_one:
-                 start_date_for_fetch = last_fetch_date_plus_one
+                    start_date_for_fetch = last_fetch_date_plus_one
 
             if last_fetch_date_str:
                 logging.info(f"Capture Daily Lineups is CHECKED. Resuming full history fetch from {start_date_for_fetch}.")
@@ -726,22 +720,32 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
                 logging.info(f"Capture Daily Lineups is CHECKED. Starting full history fetch from league start date: {start_date_for_fetch}.")
         else:
             # UNCHECKED: current week or last entry, whichever is newer
-            current_week_start_date = _get_current_week_start_date(cursor)
+            current_week_start_date_str = _get_current_week_start_date(cursor)
+
+            # --- MODIFICATION: Calculate one day *before* the week start to catch Sundays ---
+            current_week_start_obj = date.fromisoformat(current_week_start_date_str)
+            start_of_week_minus_one_obj = current_week_start_obj - timedelta(days=1)
+            start_of_week_minus_one_str = start_of_week_minus_one_obj.isoformat()
+            # --- END MODIFICATION ---
 
             if last_fetch_date_plus_one:
-                start_date_for_fetch = max(current_week_start_date, last_fetch_date_plus_one)
-                logging.info(f"Capture Daily Lineups is UNCHECKED. Resuming from more recent of week start ({current_week_start_date}) or last fetch+1 ({last_fetch_date_plus_one}): {start_date_for_fetch}.")
+                # --- MODIFIED: Use the new date string in the max() function ---
+                start_date_for_fetch = max(start_of_week_minus_one_str, last_fetch_date_plus_one)
+                logging.info(f"Capture Daily Lineups is UNCHECKED. Resuming from more recent of week start-1 ({start_of_week_minus_one_str}) or last fetch+1 ({last_fetch_date_plus_one}): {start_date_for_fetch}.")
             else:
-                start_date_for_fetch = current_week_start_date
-                logging.info(f"No existing lineup data. Capture is UNCHECKED, starting from current week start date: {start_date_for_fetch}.")
+                # --- MODIFIED: Use the new date string as the fallback ---
+                start_date_for_fetch = start_of_week_minus_one_str
+                logging.info(f"No existing lineup data. Capture is UNCHECKED, starting from current week start date - 1 day: {start_date_for_fetch}.")
 
 
         team_id = 1
+        # stop_date is today. The loop runs *until* today (current_date < stop_date)
+        # This correctly fetches all data up to and including yesterday.
         stop_date = date.today().isoformat()
         lineup_data_to_insert = []
 
         if start_date_for_fetch >= stop_date:
-            logging.info("Daily lineups are already up to date.")
+            logging.info(f"Daily lineups are already up to date (Start: {start_date_for_fetch}, Stop: {stop_date}).")
             return
 
         while team_id <= num_teams:
@@ -820,7 +824,7 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
 
         placeholders = ', '.join(['?'] * 38)
         sql = f"""
-            INSERT INTO daily_lineups_dump (
+            INSERT OR REPLACE INTO daily_lineups_dump (
                 date_, team_id, c1, c2, l1, l2, r1, r2, d1, d2, d3, d4, g1, g2,
                 b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15,
                 b16, b17, b18, b19, i1, i2, i3, i4, i5
@@ -829,10 +833,9 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
 
 
         cursor.executemany(sql, lineup_data_to_insert)
-        logging.info(f"Successfully inserted or ignored data for {len(lineup_data_to_insert)} dates.")
+        logging.info(f"Successfully inserted or replaced data for {len(lineup_data_to_insert)} dates.")
     except Exception as e:
         logging.error(f"Failed to update lineup info: {e}", exc_info=True)
-
 
 def _update_player_id(yq, cursor):
     """
@@ -1211,7 +1214,8 @@ def _update_db_metadata(cursor, update_available_players_timestamp=False):
         logging.info("Successfully updated general db_metadata timestamp.")
 
 
-def update_league_db(yq, lg, league_id, data_dir, capture_lineups=False, skip_static_info=False, skip_available_players=False):
+#def update_league_db(yq, lg, league_id, data_dir, capture_lineups=False, skip_static_info=False, skip_available_players=False):
+def update_league_db(yq, lg, league_id, data_dir, capture_lineups=False):
     """
     Creates or updates the league-specific SQLite database by calling
     individual query and update functions.
@@ -1240,14 +1244,26 @@ def update_league_db(yq, lg, league_id, data_dir, capture_lineups=False, skip_st
 
         sanitized_name = re.sub(r'[\\/*?:"<>|]', "", league_name_str)
 
-        # Clean up any old database files for this league ID
-        for f in os.listdir(data_dir):
-            if f.startswith(f"yahoo-{league_id}-") and f.endswith(".db"):
-                logging.info(f"Removing old database file: {f}")
-                os.remove(os.path.join(data_dir, f))
-
         db_filename = f"yahoo-{league_id}-{sanitized_name}.db"
         db_path = os.path.join(data_dir, db_filename)
+
+        # --- NEW CONDITIONAL DELETION ---
+        if capture_lineups:
+            logging.info("Full mode selected (capture_lineups=True). Checking for existing database file...")
+            if os.path.exists(db_path):
+                try:
+                    logging.warning(f"Deleting existing database file: {db_path}")
+                    os.remove(db_path)
+                    logging.info("Existing database file deleted successfully.")
+                except OSError as e:
+                    logging.error(f"Error deleting database file {db_path}: {e}", exc_info=True)
+                    # Decide if you want to stop the script here or try to continue
+                    # return {'success': False, 'error': f"Could not delete existing DB file: {e}"}
+            else:
+                logging.info("No existing database file found to delete.")
+        else:
+            logging.info("Update mode selected (capture_lineups=False). Existing database file will be updated.")
+        # --- END NEW CONDITIONAL DELETION ---
 
         logging.info(f"Connecting to database: {db_path}")
         conn = sqlite3.connect(db_path)
@@ -1257,18 +1273,18 @@ def update_league_db(yq, lg, league_id, data_dir, capture_lineups=False, skip_st
         _create_tables(cursor)
         _update_db_metadata(cursor) # This will set the main 'last_updated' timestamp
 
-        if not skip_static_info:
-            _update_league_info(yq, cursor, league_id, sanitized_name, league_metadata)
-            _update_teams_info(yq, cursor)
-            playoff_start_week = _update_league_scoring_settings(yq, cursor)
-            _update_lineup_settings(yq, cursor)
-            _update_fantasy_weeks(yq, cursor, league_metadata.league_key)
-            _update_league_matchups(yq, cursor, playoff_start_week)
-        else:
-            logging.info("Skipping static league info update as requested.")
-            cursor.execute("SELECT value FROM league_info WHERE key = 'playoff_start_week'")
-            playoff_row = cursor.fetchone()
-            playoff_start_week = int(playoff_row[0]) if playoff_row else 16 # Default if not found
+#        if not skip_static_info:
+        _update_league_info(yq, cursor, league_id, sanitized_name, league_metadata)
+        _update_teams_info(yq, cursor)
+        playoff_start_week = _update_league_scoring_settings(yq, cursor)
+        _update_lineup_settings(yq, cursor)
+        _update_fantasy_weeks(yq, cursor, league_metadata.league_key)
+        _update_league_matchups(yq, cursor, playoff_start_week)
+#        else:
+#            logging.info("Skipping static league info update as requested.")
+#            cursor.execute("SELECT value FROM league_info WHERE key = 'playoff_start_week'")
+#            playoff_row = cursor.fetchone()
+#            playoff_start_week = int(playoff_row[0]) if playoff_row else 16 # Default if not found
 
         # Always run lineup updates, but mode depends on 'capture_lineups'
         _update_daily_lineups(yq, cursor, conn, league_metadata.num_teams, league_metadata.start_date, capture_lineups)
@@ -1277,14 +1293,14 @@ def update_league_db(yq, lg, league_id, data_dir, capture_lineups=False, skip_st
         _create_rosters_tall_and_drop_rosters(cursor, conn)
 
         # --- yfa API Call Functions ---
-        if not skip_available_players:
-            _update_free_agents(lg, conn)
-            _update_waivers(lg, conn)
-            _update_rostered_players(lg, conn)
-            # Now, specifically update the timestamp for available players
-            _update_db_metadata(cursor, update_available_players_timestamp=True)
-        else:
-            logging.info("Skipping available players update as requested.")
+#        if not skip_available_players:
+        _update_free_agents(lg, conn)
+        _update_waivers(lg, conn)
+        _update_rostered_players(lg, conn)
+        # Now, specifically update the timestamp for available players
+        _update_db_metadata(cursor, update_available_players_timestamp=True)
+#        else:
+#            logging.info("Skipping available players update as requested.")
 
 
         conn.commit()

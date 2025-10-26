@@ -6,11 +6,11 @@
     const statusText = document.getElementById('db-status-text');
     const actionButton = document.getElementById('db-action-button');
     const captureLineupsCheckbox = document.getElementById('capture-daily-lineups');
-    const skipStaticInfoCheckbox = document.getElementById('skip-static-info');
-    const skipAvailablePlayersCheckbox = document.getElementById('skip-available-players');
+/*    const skipStaticInfoCheckbox = document.getElementById('skip-static-info');
+    const skipAvailablePlayersCheckbox = document.getElementById('skip-available-players'); */
     const logContainer = document.getElementById('log-container'); // Get the new log container
 
-    if (!statusText || !actionButton || !captureLineupsCheckbox || !skipStaticInfoCheckbox || !skipAvailablePlayersCheckbox || !logContainer) {
+    if (!statusText || !actionButton || !captureLineupsCheckbox || /*!skipStaticInfoCheckbox || !skipAvailablePlayersCheckbox ||*/ !logContainer) {
         console.error('Database page elements not found.');
         return;
     }
@@ -57,8 +57,8 @@
         logContainer.innerHTML = '<p class="text-yellow-400">Connecting to update stream...</p>';
 
         const captureLineups = captureLineupsCheckbox.checked;
-        const skipStaticInfo = skipStaticInfoCheckbox.checked;
-        const skipAvailablePlayers = skipAvailablePlayersCheckbox.checked;
+        /*const skipStaticInfo = skipStaticInfoCheckbox.checked;
+        const skipAvailablePlayers = skipAvailablePlayersCheckbox.checked;*/
 
         // --- Start the Update and Listen for Logs ---
         try {
@@ -67,9 +67,9 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    capture_lineups: captureLineups,
+                    capture_lineups: captureLineups/*,
                     skip_static_info: skipStaticInfo,
-                    skip_available_players: skipAvailablePlayers
+                    skip_available_players: skipAvailablePlayers*/
                 })
             });
 
