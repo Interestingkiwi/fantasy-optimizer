@@ -198,6 +198,11 @@ class DBFinalizer:
 
         # Fetch only the necessary data from the dump table
         cursor.execute(dump_query, query_params)
+
+        # --- FIX: Get column names IMMEDIATELY after execute ---
+        column_names = [description[0] for description in cursor.description]
+        # --- END FIX ---
+
         all_lineups = cursor.fetchall()
         # --- OPTIMIZATION END ---
 
@@ -208,8 +213,7 @@ class DBFinalizer:
 
         logging.info(f"Parsing raw player strings for {len(all_lineups)} new/updated rows...")
 
-        # (Rest of the function remains the same as before)
-        # Create a mapping for stat IDs to their category names.
+        # (Rest of the function remains mostly the same)
         stat_map = {
             1: 'G', 2: 'A', 3: 'P', 4: '+/-', 5: 'PIM', 6: 'PPG', 7: 'PPA', 8: 'PPP',
             9: 'SHG', 10: 'SHA', 11: 'SHP', 12: 'GWG', 13: 'GTG', 14: 'SOG', 15: 'SH%',
@@ -218,27 +222,31 @@ class DBFinalizer:
             29: 'GP/S', 30: 'GP/G', 33: 'TOI/S', 34: 'TOI/S/Gm'
         }
 
-        # Fetch player normalized names into a dictionary for quick lookup
         cursor.execute("SELECT player_id, player_name_normalized FROM players")
         player_norm_name_map = dict(cursor.fetchall())
         logging.info(f"Loaded {len(player_norm_name_map)} players for name normalization lookup.")
 
 
-        # Get column names to correctly map the data
-        # Note: We fetch column names *after* executing the dump_query
-        column_names = [description[0] for description in cursor.description]
-
         stats_to_insert = []
         player_string_pattern = re.compile(r"ID: (\d+), Name: .*, Stats: (\[.*\])")
         pos_pattern = re.compile(r"([a-zA-Z]+)")
-
-        # Define the active roster slots to parse for stats
         active_roster_columns = ['c1', 'c2', 'l1', 'l2', 'r1', 'r2', 'd1', 'd2', 'd3', 'd4', 'g1', 'g2']
 
-        for row in all_lineups: # Now iterating only over new/updated rows
-            row_dict = dict(zip(column_names, row))
-            date_ = row_dict['date_']
-            team_id = row_dict['team_id']
+        for row in all_lineups:
+            # --- Ensure row_dict is created correctly ---
+            try:
+                row_dict = dict(zip(column_names, row))
+                # Now safely access keys
+                date_ = row_dict['date_']
+                team_id = row_dict['team_id']
+            except KeyError as e:
+                logging.error(f"Missing key {e} when creating row_dict. Column names: {column_names}. Row data: {row}")
+                continue # Skip this row if it doesn't match columns
+            except Exception as e:
+                 logging.error(f"Error processing row {row} with columns {column_names}: {e}")
+                 continue # Skip this row on other errors
+            # --- End safety check ---
+
 
             for col in active_roster_columns:
                 if col in row_dict and row_dict[col]:
@@ -255,18 +263,15 @@ class DBFinalizer:
                             stats_list = ast.literal_eval(stats_list_str)
                             player_stats = dict(stats_list)
 
-                            # Calculate TOI/G for goalies if needed
                             if (lineup_pos == 'g' and
                                 22 in player_stats and 23 in player_stats):
                                 val_22_ga = player_stats[22]
                                 val_23_gaa = player_stats[23]
                                 if val_23_gaa > 0:
-                                    # Calculate and add/overwrite stat 28
                                     val_28_toi = (val_22_ga / val_23_gaa) * 60
                                     player_stats[28] = round(val_28_toi, 2)
-                                    # Removed logging here for brevity during bulk processing
 
-                            # Prepare all stats for insertion
+
                             for stat_id, stat_value in player_stats.items():
                                 category = stat_map.get(stat_id, 'UNKNOWN')
                                 stats_to_insert.append((
@@ -278,6 +283,7 @@ class DBFinalizer:
 
         if stats_to_insert:
             logging.info(f"Found {len(stats_to_insert)} individual stat entries to insert/ignore into daily_player_stats.")
+            # Use INSERT OR REPLACE if you want updates, INSERT OR IGNORE if you only want new ones
             cursor.executemany("""
                 INSERT OR IGNORE INTO daily_player_stats (
                     date_, team_id, player_id, player_name_normalized, lineup_pos,
@@ -343,6 +349,11 @@ class DBFinalizer:
 
         # Fetch only the necessary data from the dump table
         cursor.execute(dump_query, query_params)
+
+        # --- FIX: Get column names IMMEDIATELY after execute ---
+        column_names = [description[0] for description in cursor.description]
+        # --- END FIX ---
+
         all_lineups = cursor.fetchall()
         # --- OPTIMIZATION END ---
 
@@ -353,9 +364,7 @@ class DBFinalizer:
 
         logging.info(f"Parsing raw bench player strings for {len(all_lineups)} new/updated rows...")
 
-
-        # (Rest of the function remains the same as before)
-        # Create a mapping for stat IDs to their category names.
+        # (Rest of the function remains mostly the same)
         stat_map = {
             1: 'G', 2: 'A', 3: 'P', 4: '+/-', 5: 'PIM', 6: 'PPG', 7: 'PPA', 8: 'PPP',
             9: 'SHG', 10: 'SHA', 11: 'SHP', 12: 'GWG', 13: 'GTG', 14: 'SOG', 15: 'SH%',
@@ -364,31 +373,35 @@ class DBFinalizer:
             29: 'GP/S', 30: 'GP/G', 33: 'TOI/S', 34: 'TOI/S/Gm'
         }
 
-        # Fetch player normalized names into a dictionary for quick lookup
         cursor.execute("SELECT player_id, player_name_normalized FROM players")
         player_norm_name_map = dict(cursor.fetchall())
         logging.info(f"Loaded {len(player_norm_name_map)} players for name normalization lookup.")
 
 
-        # Get column names to correctly map the data
-        column_names = [description[0] for description in cursor.description]
-
         stats_to_insert = []
         player_string_pattern = re.compile(r"ID: (\d+), Name: .*, Stats: (\[.*\])")
         pos_pattern = re.compile(r"([a-zA-Z]+)")
-
-        # Define the bench and injured roster slots to parse for stats
         bench_roster_columns = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9',
                                  'b10', 'b11', 'b12', 'b13', 'b14', 'b15', 'b16', 'b17', 'b18', 'b19',
                                  'i1', 'i2', 'i3', 'i4', 'i5']
 
-        for row in all_lineups: # Now iterating only over new/updated rows
-            row_dict = dict(zip(column_names, row))
-            date_ = row_dict['date_']
-            team_id = row_dict['team_id']
+        for row in all_lineups:
+            # --- Ensure row_dict is created correctly ---
+            try:
+                row_dict = dict(zip(column_names, row))
+                # Now safely access keys
+                date_ = row_dict['date_']
+                team_id = row_dict['team_id']
+            except KeyError as e:
+                logging.error(f"Missing key {e} when creating row_dict for bench stats. Column names: {column_names}. Row data: {row}")
+                continue # Skip this row
+            except Exception as e:
+                 logging.error(f"Error processing row {row} for bench stats with columns {column_names}: {e}")
+                 continue # Skip this row
+            # --- End safety check ---
 
 
-            for col in bench_roster_columns: # Use bench columns
+            for col in bench_roster_columns:
                 if col in row_dict and row_dict[col]:
                     player_string = row_dict[col]
                     match = player_string_pattern.match(player_string)
@@ -403,15 +416,13 @@ class DBFinalizer:
                             stats_list = ast.literal_eval(stats_list_str)
                             player_stats = dict(stats_list)
 
-                            # Calculate TOI/G for goalies if needed (even if benched/IR)
-                            # Assuming goalie eligibility isn't solely based on 'g1'/'g2' slot
                             if (22 in player_stats and 23 in player_stats):
                                 val_22_ga = player_stats[22]
                                 val_23_gaa = player_stats[23]
                                 if val_23_gaa > 0:
                                     val_28_toi = (val_22_ga / val_23_gaa) * 60
                                     player_stats[28] = round(val_28_toi, 2)
-                                    # Removed logging here
+
 
                             for stat_id, stat_value in player_stats.items():
                                 category = stat_map.get(stat_id, 'UNKNOWN')
@@ -425,6 +436,7 @@ class DBFinalizer:
 
         if stats_to_insert:
             logging.info(f"Found {len(stats_to_insert)} individual bench stat entries to insert/ignore into daily_bench_stats.")
+            # Use INSERT OR REPLACE if you want updates, INSERT OR IGNORE if you only want new ones
             cursor.executemany("""
                 INSERT OR IGNORE INTO daily_bench_stats (
                     date_, team_id, player_id, player_name_normalized, lineup_pos,
@@ -436,7 +448,6 @@ class DBFinalizer:
             logging.info("Successfully stored/ignored parsed bench player stats in daily_bench_stats.")
         else:
             logging.info("No new bench player stats to insert into daily_bench_stats.")
-
 
 def _create_tables(cursor):
     """
