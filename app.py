@@ -33,7 +33,7 @@ import threading
 
 # --- Flask App Configuration ---
 # Assume a 'data' directory exists for storing database files
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+DATA_DIR = '/var/data/dbs'
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
