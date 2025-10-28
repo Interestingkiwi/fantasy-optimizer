@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             if (data.timestamp) {
-                timestampText.textContent = `League data was last pulled from Yahoo at ${data.timestamp}`;
+                timestampText.textContent = `League data exists, check League Database tab for last update`;
             } else {
                 timestampText.textContent = 'League data has not been updated yet. Please visit the League Database page.';
             }

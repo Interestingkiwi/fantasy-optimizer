@@ -8,9 +8,13 @@
     const optimalLineupContainer = document.getElementById('optimal-lineup-container');
     const unusedRosterSpotsContainer = document.getElementById('unused-roster-spots-container');
     const weekSelect = document.getElementById('week-select');
+    const checkboxesContainer = document.getElementById('category-checkboxes-container');
     const yourTeamSelect = document.getElementById('your-team-select');
 
     let pageData = null; // To store weeks and teams
+    const CATEGORY_PREF_KEY = 'lineupCategoryPreferences';
+    let allScoringCategories = []; // Store all categories
+    let checkedCategories = []; // Store currently checked categories
 
     /**
      * Calculates a color for a heat map based on a player's rank.
@@ -52,6 +56,10 @@
 
             pageData = data;
             populateDropdowns();
+            const savedCategories = localStorage.getItem(CATEGORY_PREF_KEY);
+            if (savedCategories) {
+                checkedCategories = JSON.parse(savedCategories);
+            }
             setupEventListeners();
 
             // Initial data load
@@ -121,6 +129,15 @@
         optimalLineupContainer.innerHTML = '<p class="text-gray-400">Calculating optimal lineups...</p>';
         unusedRosterSpotsContainer.innerHTML = '';
 
+            // Read checked categories from the UI, if it's rendered
+            const categoryCheckboxes = document.querySelectorAll('#category-checkboxes-container input[name="category"]:checked');
+            let categoriesToSend = null;
+
+            if (categoryCheckboxes.length > 0) {
+                categoriesToSend = Array.from(categoryCheckboxes).map(cb => cb.value);
+            } else if (checkedCategories.length > 0) {
+                categoriesToSend = checkedCategories;
+            }
 
         try {
             const response = await fetch('/api/roster_data', {
@@ -129,11 +146,21 @@
                 body: JSON.stringify({
                     week: selectedWeek,
                     team_name: yourTeamName,
+                    categories: categoriesToSend
                 })
             });
 
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to fetch roster.');
+
+            if (allScoringCategories.length === 0) {
+                allScoringCategories = data.scoring_categories;
+                if (localStorage.getItem(CATEGORY_PREF_KEY) === null) {
+                  checkedCategories = data.checked_categories;
+                }
+                renderCategoryCheckboxes(); // New function
+            }
+
 
             renderTable(data.players, data.scoring_categories, data.daily_optimal_lineups);
             renderOptimalLineups(data.daily_optimal_lineups, data.lineup_settings);
@@ -377,6 +404,60 @@
 
         unusedRosterSpotsContainer.innerHTML = tableHtml;
     }
+
+
+    function renderCategoryCheckboxes() {
+        let checkboxHtml = `
+            <div class="flex justify-between items-center mb-2">
+                <label class="block text-sm font-medium text-gray-300">Update Lineup Priority Based On:</label>
+                <div>
+                    <button id="check-all-btn" class="text-xs bg-gray-600 hover:bg-gray-500 text-white py-1 px-2 rounded mr-2 transition-colors duration-150">Check All</button>
+                    <button id="uncheck-all-btn" class="text-xs bg-gray-600 hover:bg-gray-500 text-white py-1 px-2 rounded transition-colors duration-150">Uncheck All</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 mb-4">
+        `;
+        allScoringCategories.forEach(cat => {
+            const isChecked = checkedCategories.includes(cat);
+            checkboxHtml += `
+                <div class="flex items-center">
+                    <input id="cat-${cat}" name="category" type="checkbox" value="${cat}" ${isChecked ? 'checked' : ''} class="h-4 w-4 bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 rounded">
+                    <label for="cat-${cat}" class="ml-2 block text-sm text-gray-300">${cat}</label>
+                </div>
+            `;
+        });
+        checkboxHtml += '</div>';
+
+        // Add the Update button
+        checkboxHtml += `
+            <button id="update-lineups-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded transition-colors duration-150">
+                Update Lineups
+            </button>
+        `;
+        checkboxesContainer.innerHTML = checkboxHtml;
+
+        // Add event listeners for new buttons
+        document.getElementById('check-all-btn').addEventListener('click', () => {
+            document.querySelectorAll('#category-checkboxes-container input[name="category"]').forEach(cb => cb.checked = true);
+        });
+
+        document.getElementById('uncheck-all-btn').addEventListener('click', () => {
+            document.querySelectorAll('#category-checkboxes-container input[name="category"]').forEach(cb => cb.checked = false);
+        });
+
+        // The "Update Lineups" button will trigger the fetch
+        document.getElementById('update-lineups-btn').addEventListener('click', () => {
+            const currentChecked = Array.from(
+                document.querySelectorAll('#category-checkboxes-container input[name="category"]:checked')
+            ).map(cb => cb.value);
+
+            localStorage.setItem(CATEGORY_PREF_KEY, JSON.stringify(currentChecked));
+
+            fetchAndRenderTable();
+        });
+    }
+
+
 
 
     function setupEventListeners() {

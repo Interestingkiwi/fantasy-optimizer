@@ -33,7 +33,7 @@ import threading
 
 # --- Flask App Configuration ---
 # Assume a 'data' directory exists for storing database files
-DATA_DIR = '/var/data/dbs'
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
@@ -93,10 +93,18 @@ def get_yfpy_instance():
     if 'yahoo_token' not in session:
         return None
 
+    # Dev mode will have a mock token, which is fine for bypassing checks
+    # but will fail on actual API calls, which is expected.
+    if session.get('dev_mode'):
+        logging.info("Dev mode: Skipping real yfpy init.")
+        # Return a mock object or None, depending on what's safer.
+        # Let's try to initialize it; it will fail on use, which is fine.
+        pass # Fall through to normal init, it will use the 'dev_token'
+
     token = session['yahoo_token']
     auth_data = {
-        'consumer_key': session['consumer_key'],
-        'consumer_secret': session['consumer_secret'],
+        'consumer_key': session.get('consumer_key', 'dev_key'), # Add defaults for dev_mode
+        'consumer_secret': session.get('consumer_secret', 'dev_secret'), # Add defaults for dev_mode
         'access_token': token.get('access_token'),
         'refresh_token': token.get('refresh_token'),
         'token_type': token.get('token_type', 'bearer'),
@@ -111,13 +119,17 @@ def get_yfpy_instance():
         )
         return yq
     except Exception as e:
-        logging.error(f"Failed to init yfpy: {e}", exc_info=True)
+        logging.error(f"Failed to init yfpy (expected in dev mode): {e}", exc_info=True)
         return None
 
 def get_yfa_lg_instance():
     """Helper function to get an authenticated yfa league instance."""
     if 'yahoo_token' not in session:
         return None
+
+    if session.get('dev_mode'):
+        logging.info("Dev mode: Skipping real yfa init.")
+        return None # YFA logic is more complex, safer to return None.
 
     token = session['yahoo_token']
     consumer_key = session.get('consumer_key')
@@ -380,7 +392,9 @@ def _get_ranked_roster_for_week(cursor, team_id, week_num):
                 player['total_rank'] = round(total_rank, 2)
             else:
                 player['total_rank'] = None # Use None for JSON compatibility
-
+            if stats:
+                for col in cat_rank_columns:
+                    player[col] = stats.get(col) if stats.get(col) is not None else None
     return active_players
 
 def _calculate_unused_spots(days_in_week, active_players, lineup_settings):
@@ -391,6 +405,7 @@ def _calculate_unused_spots(days_in_week, active_players, lineup_settings):
     unused_spots_data = {}
     position_order = ['C', 'LW', 'RW', 'D', 'G']
 
+    today = date.today()
     for day_date in days_in_week:
         day_str = day_date.strftime('%Y-%m-%d')
         day_name = day_date.strftime('%a')
@@ -399,7 +414,10 @@ def _calculate_unused_spots(days_in_week, active_players, lineup_settings):
 
         daily_lineup = get_optimal_lineup(players_playing_today, lineup_settings)
 
-        open_slots = {pos: lineup_settings.get(pos, 0) - len(daily_lineup.get(pos, [])) for pos in position_order}
+        if day_date < today:
+            open_slots = {pos: '-' for pos in position_order}
+        else:
+            open_slots = {pos: lineup_settings.get(pos, 0) - len(daily_lineup.get(pos, [])) for pos in position_order}
 
         # Asterisk logic: check if a starter could move to an open slot
         for pos, players in daily_lineup.items():
@@ -497,7 +515,25 @@ def home():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    session['league_id'] = data.get('league_id')
+    league_id = data.get('league_id')
+
+    # --- [START] DEV CODE BYPASS ---
+    if league_id == '99999':
+        session['league_id'] = '22705' # Use the test DB's league ID
+        session['use_test_db'] = True
+        session['dev_mode'] = True
+        # Create a mock token to pass authentication checks
+        session['yahoo_token'] = {
+            'access_token': 'dev_token',
+            'refresh_token': 'dev_refresh',
+            'expires_at': time.time() + 3600
+        }
+        logging.info("Developer login successful using code 99999. Using test DB.")
+        # Send a specific response for the frontend to handle
+        return jsonify({'dev_login': True, 'redirect_url': url_for('home')})
+    # --- [END] DEV CODE BYPASS ---
+
+    session['league_id'] = league_id # Original logic
     session['consumer_key'] = os.environ.get("YAHOO_CONSUMER_KEY")
     session['consumer_secret'] = os.environ.get("YAHOO_CONSUMER_SECRET")
 
@@ -511,6 +547,7 @@ def login():
     yahoo = OAuth2Session(session['consumer_key'], redirect_uri=redirect_uri)
     authorization_url, state = yahoo.authorization_url(authorization_base_url)
     session['oauth_state'] = state
+    # Original response
     return jsonify({'auth_url': authorization_url})
 
 @app.route('/callback')
@@ -645,6 +682,17 @@ def get_matchup_stats():
     if not conn:
         return jsonify({'error': error_msg}), 404
 
+    cursor = conn.cursor()
+    cursor.execute("SELECT category FROM scoring")
+    all_scoring_categories = [row['category'] for row in cursor.fetchall()]
+
+    checked_categories = data.get('categories')
+    # Handle default case: if no categories are sent, all are checked
+    if checked_categories is None:
+        checked_categories = all_scoring_categories
+    unchecked_categories = [cat for cat in all_scoring_categories if cat not in checked_categories]
+
+
     try:
         cursor = conn.cursor()
 
@@ -698,7 +746,13 @@ def get_matchup_stats():
 
         stats = {
             'team1': {'live': {cat: 0 for cat in all_categories_to_fetch}, 'row': {}},
-            'team2': {'live': {cat: 0 for cat in all_categories_to_fetch}, 'row': {}}
+            'team2': {'live': {cat: 0 for cat in all_categories_to_fetch}, 'row': {}},
+            'game_counts': {
+                'team1_total': 0,
+                'team2_total': 0,
+                'team1_remaining': 0,
+                'team2_remaining': 0
+            }
         }
 
         for row in live_stats_decoded:
@@ -734,6 +788,35 @@ def get_matchup_stats():
         team1_ranked_roster = _get_ranked_roster_for_week(cursor, team1_id, week_num)
         team2_ranked_roster = _get_ranked_roster_for_week(cursor, team2_id, week_num)
 
+        rosters_to_update = [team1_ranked_roster, team2_ranked_roster]
+
+        # Need to get player_stats for all players in both rosters
+        all_active_normalized_names = [p['player_name_normalized'] for p in team1_ranked_roster + team2_ranked_roster]
+        player_stats = {}
+        if all_active_normalized_names:
+            placeholders = ','.join('?' for _ in all_active_normalized_names)
+            cat_rank_columns = [f"{cat}_cat_rank" for cat in all_scoring_categories]
+            query = f"SELECT player_name_normalized, {', '.join(cat_rank_columns)} FROM joined_player_stats WHERE player_name_normalized IN ({placeholders})"
+            cursor.execute(query, all_active_normalized_names)
+            player_stats = {row['player_name_normalized']: dict(row) for row in cursor.fetchall()}
+
+        for roster in rosters_to_update:
+            for player in roster:
+                p_stats = player_stats.get(player['player_name_normalized'])
+                new_total_rank = 0
+                if p_stats:
+                    for cat in all_scoring_categories:
+                        rank_key = f"{cat}_cat_rank"
+                        rank_value = p_stats.get(rank_key)
+                        if rank_value is not None:
+                            if cat in unchecked_categories:
+                                new_total_rank += rank_value / 10.0 # Using your / 10.0 logic
+                            else:
+                                new_total_rank += rank_value
+                player['total_rank'] = round(new_total_rank, 2) if p_stats else None
+                if player.get('total_rank') is None:
+                    player['total_rank'] = 60
+
         today = date.today()
         projection_start_date = max(today, start_date_obj)
 
@@ -749,6 +832,9 @@ def get_matchup_stats():
 
             team1_starters = [player for pos_players in team1_lineup.values() for player in pos_players]
             team2_starters = [player for pos_players in team2_lineup.values() for player in pos_players]
+
+            stats['game_counts']['team1_remaining'] += len(team1_starters)
+            stats['game_counts']['team2_remaining'] += len(team2_starters)
 
             all_starter_ids_today = [p['player_id'] for p in team1_starters + team2_starters]
 
@@ -793,7 +879,20 @@ def get_matchup_stats():
                     row_stats[cat] = round(sv_pct, 3)
                 elif isinstance(value, (int, float)) and cat not in ['GAA', 'SVpct']:
                     row_stats[cat] = round(value, 1)
+        for day_date in days_in_week:
+            day_str = day_date.strftime('%Y-%m-%d')
 
+            team1_players_today = [p for p in team1_ranked_roster if day_str in p.get('game_dates_this_week', [])]
+            team2_players_today = [p for p in team2_ranked_roster if day_str in p.get('game_dates_this_week', [])]
+
+            team1_lineup = get_optimal_lineup(team1_players_today, lineup_settings)
+            team2_lineup = get_optimal_lineup(team2_players_today, lineup_settings)
+
+            team1_starters = [player for pos_players in team1_lineup.values() for player in pos_players]
+            team2_starters = [player for pos_players in team2_lineup.values() for player in pos_players]
+
+            stats['game_counts']['team1_total'] += len(team1_starters)
+            stats['game_counts']['team2_total'] += len(team2_starters)
         # --- Calculate Unused Roster Spots for Team 1 ---
         stats['team1_unused_spots'] = _calculate_unused_spots(days_in_week, team1_ranked_roster, lineup_settings)
 
@@ -861,6 +960,14 @@ def get_roster_data():
     try:
         cursor = conn.cursor()
 
+        cursor.execute("SELECT category FROM scoring")
+        all_scoring_categories = [row['category'] for row in cursor.fetchall()]
+
+        checked_categories = data.get('categories')
+        if checked_categories is None:
+            checked_categories = all_scoring_categories
+
+        unchecked_categories = [cat for cat in all_scoring_categories if cat not in checked_categories]
         # Get team ID
         cursor.execute("SELECT team_id FROM teams WHERE CAST(name AS TEXT) = ?", (team_name,))
         team_id_row = cursor.fetchone()
@@ -931,12 +1038,30 @@ def get_roster_data():
                 player['games_this_week'] = []
                 player['game_dates_this_week'] = []
 
-            # Add category ranks for all players (active and inactive)
             p_stats = player_stats.get(player['player_name_normalized'])
+            new_total_rank = 0
             if p_stats:
-                for cat in scoring_categories:
+                for cat in all_scoring_categories:
                     rank_key = f"{cat}_cat_rank"
-                    player[rank_key] = round(p_stats.get(rank_key), 2) if p_stats.get(rank_key) is not None else None
+                    rank_value = p_stats.get(rank_key)
+
+                    # Store individual rank for the table
+                    player[rank_key] = round(rank_value, 2) if rank_value is not None else None
+
+                    # Calculate custom total_rank
+                    if rank_value is not None:
+                        if cat in unchecked_categories:
+                            new_total_rank += rank_value / 10.0
+                        else:
+                            new_total_rank += rank_value
+            player['total_rank'] = round(new_total_rank, 2) if p_stats else None
+
+            # Add category ranks for all players (active and inactive)
+#            p_stats = player_stats.get(player['player_name_normalized'])
+#            if p_stats:
+#                for cat in scoring_categories:
+#                    rank_key = f"{cat}_cat_rank"
+#                    player[rank_key] = round(p_stats.get(rank_key), 2) if p_stats.get(rank_key) is not None else None
 
             player['games_next_week'] = []
             if start_date_next and end_date_next:
@@ -948,6 +1073,32 @@ def get_roster_data():
                         game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
                         if start_date_next <= game_date <= end_date_next:
                             player['games_next_week'].append(game_date.strftime('%a'))
+
+        logging.info("Updating ranks for active_players list...")
+        for player in active_players:
+            p_stats = player_stats.get(player['player_name_normalized'])
+            new_total_rank = 0
+            if p_stats:
+                for cat in all_scoring_categories:
+                    rank_key = f"{cat}_cat_rank"
+                    rank_value = p_stats.get(rank_key)
+
+                    # We don't need to store individual cat ranks here
+                    # as they are already on the player object from _get_ranked_roster_for_week
+                    if rank_value is not None:
+                        if cat in unchecked_categories:
+                            new_total_rank += rank_value / 10.0 # Using your / 10.0 logic
+                        else:
+                            new_total_rank += rank_value
+
+            player['total_rank'] = round(new_total_rank, 2) if p_stats else None
+
+            # Also ensure a default rank for players with no stats,
+            # matching get_optimal_lineup logic
+            if player.get('total_rank') is None:
+                player['total_rank'] = 60
+        logging.info("Finished updating ranks for active_players.")
+
 
         # Get lineup settings
         cursor.execute("SELECT position, position_count FROM lineup_settings WHERE position NOT IN ('BN', 'IR', 'IR+')")
@@ -964,7 +1115,10 @@ def get_roster_data():
             ]
 
             if players_playing_today:
-                optimal_lineup_for_day = get_optimal_lineup(players_playing_today, lineup_settings)
+                optimal_lineup_for_day = get_optimal_lineup(
+                    players_playing_today,
+                    lineup_settings
+                )
                 display_date = day_date.strftime('%A, %b %d')
                 daily_optimal_lineups[display_date] = optimal_lineup_for_day
 
@@ -982,8 +1136,9 @@ def get_roster_data():
         return jsonify({
             'players': all_players,
             'daily_optimal_lineups': daily_optimal_lineups,
-            'scoring_categories': scoring_categories,
+            'scoring_categories': all_scoring_categories,
             'lineup_settings': lineup_settings,
+            'checked_categories': checked_categories,
             'unused_roster_spots': unused_roster_spots
         })
 
@@ -1124,6 +1279,9 @@ def update_db_in_background(yq, lg, league_id, data_dir, capture_lineups):
 
 @app.route('/api/update_db', methods=['POST'])
 def update_db_route():
+    if session.get('dev_mode'):
+        return jsonify({'success': False, 'error': 'Database updates are disabled in dev mode.'}), 403
+
     yq = get_yfpy_instance()
     lg = get_yfa_lg_instance()
     if not yq or not lg:
@@ -1185,9 +1343,15 @@ def api_settings():
     elif request.method == 'POST':
         data = request.get_json()
         use_test_db = data.get('use_test_db', False)
-        session['use_test_db'] = use_test_db
-        logging.info(f"Test DB mode set to: {use_test_db}")
-        return jsonify({'success': True, 'use_test_db': use_test_db})
+
+        # Dev mode forces the test DB on, don't let it be turned off
+        if session.get('dev_mode'):
+             session['use_test_db'] = True
+        else:
+            session['use_test_db'] = use_test_db
+
+        logging.info(f"Test DB mode set to: {session['use_test_db']}")
+        return jsonify({'success': True, 'use_test_db': session['use_test_db']})
 
 @app.route('/api/db_timestamp')
 def db_timestamp():
