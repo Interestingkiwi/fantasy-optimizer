@@ -6,7 +6,7 @@ Main run app for Fantasystreams.app
 
 Author: Jason Druckenmiller
 Date: 10/16/2025
-Updated: 10/23/2025
+Updated: 10/30/2025
 """
 
 import os
@@ -253,29 +253,40 @@ def get_optimal_lineup(players, lineup_settings):
 
     lineup = {pos: [] for pos in lineup_settings}
     player_pool = list(ranked_players)
-    assigned_player_names = set()
+
+    # --- START MODIFICATION ---
+    # Use player_id for tracking. It's guaranteed to exist and be unique.
+    assigned_player_ids = set()
 
     def assign_player(player, pos, current_lineup, assigned_set):
         current_lineup[pos].append(player)
-        assigned_set.add(player['player_name_normalized'])
+        # Use player_id, which is present on both base and simulated players
+        assigned_set.add(player.get('player_id'))
         return True
+    # --- END MODIFICATION ---
+
+    # --- Helper to safely get position string ---
+    def get_pos_str(p):
+        return p.get('eligible_positions') or p.get('positions', '')
 
     # --- Pass 1: Place players with only one eligible position ---
     single_pos_players = sorted(
-        [p for p in player_pool if len(p['eligible_positions'].split(',')) == 1],
+        [p for p in player_pool if len(get_pos_str(p).split(',')) == 1],
         key=lambda p: p['total_rank']
     )
     for player in single_pos_players:
-        pos = player['eligible_positions'].strip()
+        pos = get_pos_str(player).strip()
         if pos in lineup and len(lineup[pos]) < lineup_settings.get(pos, 0):
-            assign_player(player, pos, lineup, assigned_player_names)
+            # Use the new ID-based set
+            assign_player(player, pos, lineup, assigned_player_ids)
 
-    player_pool = [p for p in player_pool if p['player_name_normalized'] not in assigned_player_names]
+    # Filter pool based on player_id
+    player_pool = [p for p in player_pool if p.get('player_id') not in assigned_player_ids]
 
     # --- Pass 2: Place multi-position players using a scarcity-aware algorithm ---
     player_pool.sort(key=lambda p: p['total_rank'])
     for player in player_pool:
-        eligible_positions = [pos.strip() for pos in player['eligible_positions'].split(',')]
+        eligible_positions = [pos.strip() for pos in get_pos_str(player).split(',')]
         available_slots_for_player = [
             pos for pos in eligible_positions if pos in lineup and len(lineup[pos]) < lineup_settings.get(pos, 0)
         ]
@@ -284,45 +295,40 @@ def get_optimal_lineup(players, lineup_settings):
 
         slot_scarcity = {}
         for slot in available_slots_for_player:
-            scarcity_count = sum(1 for other in player_pool if other != player and slot in [p.strip() for p in other['eligible_positions'].split(',')])
+            scarcity_count = sum(1 for other in player_pool if other != player and slot in [p.strip() for p in get_pos_str(other).split(',')])
             slot_scarcity[slot] = scarcity_count
 
         best_pos = min(slot_scarcity, key=slot_scarcity.get)
-        assign_player(player, best_pos, lineup, assigned_player_names)
+        # Use the new ID-based set
+        assign_player(player, best_pos, lineup, assigned_player_ids)
 
-    player_pool = [p for p in player_pool if p['player_name_normalized'] not in assigned_player_names]
+    # Filter pool based on player_id
+    player_pool = [p for p in player_pool if p.get('player_id') not in assigned_player_ids]
 
     # --- Pass 3: Upgrade Pass ---
-    # Try to swap in benched players if they are better than a starter.
-    for benched_player in player_pool: # player_pool now contains only benched players
-        for pos in [p.strip() for p in benched_player['eligible_positions'].split(',')]:
+    # (This pass is unaffected as it doesn't use the assigned_set)
+    for benched_player in player_pool:
+        for pos in [p.strip() for p in get_pos_str(benched_player).split(',')]:
             if pos not in lineup: continue
 
-            # Find the worst-ranked starter in this position
-            if not lineup[pos]: continue # Should not happen if lineup is full, but a safeguard
+            if not lineup[pos]: continue
 
             worst_starter_in_pos = max(lineup[pos], key=lambda p: p['total_rank'])
 
-            # If the benched player is better, try to make a swap
             if benched_player['total_rank'] < worst_starter_in_pos['total_rank']:
-                # The simple swap: benched player takes the starter's spot
                 lineup[pos].remove(worst_starter_in_pos)
                 lineup[pos].append(benched_player)
 
-                # Now, try to re-slot the benched starter (worst_starter_in_pos)
-                # This makes the algorithm more robust.
                 is_re_slotted = False
-                for other_pos in [p.strip() for p in worst_starter_in_pos['eligible_positions'].split(',')]:
+                for other_pos in [p.strip() for p in get_pos_str(worst_starter_in_pos).split(',')]:
                     if other_pos in lineup and len(lineup[other_pos]) < lineup_settings.get(other_pos, 0):
                         lineup[other_pos].append(worst_starter_in_pos)
                         is_re_slotted = True
-                        break # Re-slotted successfully
-
-                # If the bumped starter couldn't be re-slotted, they go to the bench.
-                # The lineup is still better overall because of the initial upgrade.
-                break # Move to the next benched player
+                        break
+                break
 
     return lineup
+
 
 def _get_ranked_roster_for_week(cursor, team_id, week_num):
     """
@@ -397,11 +403,14 @@ def _get_ranked_roster_for_week(cursor, team_id, week_num):
                     player[col] = stats.get(col) if stats.get(col) is not None else None
     return active_players
 
-def _calculate_unused_spots(days_in_week, active_players, lineup_settings):
+def _calculate_unused_spots(days_in_week, active_players, lineup_settings, simulated_moves=None):
     """
     Calculates the unused roster spots for each day of the week and identifies
-    potential player movements.
+    potential player movements, applying simulated add/drops if provided.
     """
+    if simulated_moves is None:
+        simulated_moves = []
+
     unused_spots_data = {}
     position_order = ['C', 'LW', 'RW', 'D', 'G']
 
@@ -410,7 +419,28 @@ def _calculate_unused_spots(days_in_week, active_players, lineup_settings):
         day_str = day_date.strftime('%Y-%m-%d')
         day_name = day_date.strftime('%a')
 
-        players_playing_today = [p for p in active_players if day_str in p.get('game_dates_this_week', [])]
+        # --- NEW: Build the roster for this specific day based on simulation ---
+        daily_active_roster = []
+        # Use int for player_id comparisons for robustness
+        dropped_player_ids_today = {int(m['dropped_player']['player_id']) for m in simulated_moves if m['date'] <= day_str}
+
+        # 1. Add players from the base roster who haven't been dropped by today
+        for p in active_players:
+            if int(p.get('player_id', 0)) not in dropped_player_ids_today:
+                daily_active_roster.append(p)
+
+        # 2. Add players from simulated moves who have been added by today
+        for move in simulated_moves:
+            if move['date'] <= day_str:
+                daily_active_roster.append(move['added_player'])
+        # --- END NEW ---
+
+        players_playing_today = []
+        for p in daily_active_roster:
+            # Check both 'game_dates_this_week' (for base roster) and 'game_dates_this_week_full' (for added players)
+            game_dates = p.get('game_dates_this_week') or p.get('game_dates_this_week_full', [])
+            if day_str in game_dates:
+                players_playing_today.append(p)
 
         daily_lineup = get_optimal_lineup(players_playing_today, lineup_settings)
 
@@ -426,7 +456,8 @@ def _calculate_unused_spots(days_in_week, active_players, lineup_settings):
             # If this position is full, check if any of its players could move
             if open_slots[pos] == 0:
                 for player in players:
-                    eligible = [p.strip() for p in player['eligible_positions'].split(',')]
+                    eligible_positions_str = player.get('eligible_positions') or player.get('positions', '')
+                    eligible = [p.strip() for p in eligible_positions_str.split(',')]
                     for other_pos in eligible:
                         current_val = open_slots.get(other_pos)
                         if current_val is not None:
@@ -467,7 +498,7 @@ def _get_ranked_players(cursor, player_ids, cat_rank_columns, week_num):
     placeholders = ','.join('?' for _ in player_ids)
 
     # Construct the full list of columns to select
-    columns_to_select = ['player_id', 'player_name', 'player_team', 'positions'] + cat_rank_columns
+    columns_to_select = ['player_id', 'player_name', 'player_team', 'positions', 'player_name_normalized'] + cat_rank_columns
 
     query = f"""
         SELECT {', '.join(columns_to_select)}
@@ -486,6 +517,7 @@ def _get_ranked_players(cursor, player_ids, cat_rank_columns, week_num):
         # Get schedules
         player['games_this_week'] = []
         player['games_next_week'] = []
+        player['game_dates_this_week_full'] = []
         cursor.execute("SELECT schedule_json FROM team_schedules WHERE team_tricode = ?", (player.get('player_team'),))
         schedule_row = cursor.fetchone()
         if schedule_row and schedule_row['schedule_json']:
@@ -494,6 +526,7 @@ def _get_ranked_players(cursor, player_ids, cat_rank_columns, week_num):
                 game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
                 if start_date and end_date and start_date <= game_date <= end_date:
                     player['games_this_week'].append(game_date.strftime('%a'))
+                    player['game_dates_this_week_full'].append(game_date_str)
                 if start_date_next and end_date_next and start_date_next <= game_date <= end_date_next:
                     player['games_next_week'].append(game_date.strftime('%a'))
 
@@ -677,6 +710,7 @@ def get_matchup_stats():
     week_num = data.get('week')
     team1_name = data.get('team1_name')
     team2_name = data.get('team2_name')
+    simulated_moves = data.get('simulated_moves', [])
 
     conn, error_msg = get_db_connection_for_league(league_id)
     if not conn:
@@ -790,33 +824,6 @@ def get_matchup_stats():
 
         rosters_to_update = [team1_ranked_roster, team2_ranked_roster]
 
-        # Need to get player_stats for all players in both rosters
-        all_active_normalized_names = [p['player_name_normalized'] for p in team1_ranked_roster + team2_ranked_roster]
-        player_stats = {}
-        if all_active_normalized_names:
-            placeholders = ','.join('?' for _ in all_active_normalized_names)
-            cat_rank_columns = [f"{cat}_cat_rank" for cat in all_scoring_categories]
-            query = f"SELECT player_name_normalized, {', '.join(cat_rank_columns)} FROM joined_player_stats WHERE player_name_normalized IN ({placeholders})"
-            cursor.execute(query, all_active_normalized_names)
-            player_stats = {row['player_name_normalized']: dict(row) for row in cursor.fetchall()}
-
-        for roster in rosters_to_update:
-            for player in roster:
-                p_stats = player_stats.get(player['player_name_normalized'])
-                new_total_rank = 0
-                if p_stats:
-                    for cat in all_scoring_categories:
-                        rank_key = f"{cat}_cat_rank"
-                        rank_value = p_stats.get(rank_key)
-                        if rank_value is not None:
-                            if cat in unchecked_categories:
-                                new_total_rank += rank_value / 10.0 # Using your / 10.0 logic
-                            else:
-                                new_total_rank += rank_value
-                player['total_rank'] = round(new_total_rank, 2) if p_stats else None
-                if player.get('total_rank') is None:
-                    player['total_rank'] = 60
-
         today = date.today()
         projection_start_date = max(today, start_date_obj)
 
@@ -824,10 +831,27 @@ def get_matchup_stats():
         while current_date <= end_date_obj:
             current_date_str = current_date.strftime('%Y-%m-%d')
 
-            team1_players_today = [p for p in team1_ranked_roster if current_date_str in p.get('game_dates_this_week', [])]
+            # --- NEW: Build Team 1's daily roster ---
+            t1_daily_roster = []
+            # Use int for robust matching
+            dropped_player_ids_today = {int(m['dropped_player']['player_id']) for m in simulated_moves if m['date'] <= current_date_str}
+
+            for p in team1_ranked_roster: # 1. Base roster
+                if int(p.get('player_id', 0)) not in dropped_player_ids_today:
+                    t1_daily_roster.append(p)
+
+            for move in simulated_moves: # 2. Sim players
+                if move['date'] <= current_date_str:
+                    t1_daily_roster.append(move['added_player'])
+
+            t1_players_today = []
+            for p in t1_daily_roster:
+                game_dates = p.get('game_dates_this_week') or p.get('game_dates_this_week_full', [])
+                if current_date_str in game_dates:
+                    t1_players_today.append(p)
             team2_players_today = [p for p in team2_ranked_roster if current_date_str in p.get('game_dates_this_week', [])]
 
-            team1_lineup = get_optimal_lineup(team1_players_today, lineup_settings)
+            team1_lineup = get_optimal_lineup(t1_players_today, lineup_settings)
             team2_lineup = get_optimal_lineup(team2_players_today, lineup_settings)
 
             team1_starters = [player for pos_players in team1_lineup.values() for player in pos_players]
@@ -850,7 +874,10 @@ def get_matchup_stats():
                         for category in projection_cats:
                             stat_val = player_proj.get(category) or 0
                             stats['team1']['row'][category] += stat_val
-                        if 'G' in starter['eligible_positions'].split(','):
+
+                        # Safely get position string from either key
+                        pos_str = starter.get('eligible_positions') or starter.get('positions', '')
+                        if 'G' in pos_str.split(','):
                             stats['team1']['row']['TOI/G'] += 60
 
                 for starter in team2_starters:
@@ -859,7 +886,10 @@ def get_matchup_stats():
                         for category in projection_cats:
                             stat_val = player_proj.get(category) or 0
                             stats['team2']['row'][category] += stat_val
-                        if 'G' in starter['eligible_positions'].split(','):
+
+                        # Safely get position string from either key
+                        pos_str = starter.get('eligible_positions') or starter.get('positions', '')
+                        if 'G' in pos_str.split(','):
                             stats['team2']['row']['TOI/G'] += 60
 
             current_date += timedelta(days=1)
@@ -882,10 +912,26 @@ def get_matchup_stats():
         for day_date in days_in_week:
             day_str = day_date.strftime('%Y-%m-%d')
 
-            team1_players_today = [p for p in team1_ranked_roster if day_str in p.get('game_dates_this_week', [])]
+            # --- NEW: Build Team 1's daily roster (repeat logic) ---
+            t1_daily_roster = []
+            dropped_player_ids_today = {int(m['dropped_player']['player_id']) for m in simulated_moves if m['date'] <= day_str}
+            for p in team1_ranked_roster:
+                if int(p.get('player_id', 0)) not in dropped_player_ids_today:
+                    t1_daily_roster.append(p)
+            for move in simulated_moves:
+                if move['date'] <= day_str:
+                    t1_daily_roster.append(move['added_player'])
+
+            t1_players_today = []
+            for p in t1_daily_roster:
+                game_dates = p.get('game_dates_this_week') or p.get('game_dates_this_week_full', [])
+                if day_str in game_dates:
+                    t1_players_today.append(p)
+            # --- END NEW ---
+
             team2_players_today = [p for p in team2_ranked_roster if day_str in p.get('game_dates_this_week', [])]
 
-            team1_lineup = get_optimal_lineup(team1_players_today, lineup_settings)
+            team1_lineup = get_optimal_lineup(t1_players_today, lineup_settings)
             team2_lineup = get_optimal_lineup(team2_players_today, lineup_settings)
 
             team1_starters = [player for pos_players in team1_lineup.values() for player in pos_players]
@@ -894,7 +940,7 @@ def get_matchup_stats():
             stats['game_counts']['team1_total'] += len(team1_starters)
             stats['game_counts']['team2_total'] += len(team2_starters)
         # --- Calculate Unused Roster Spots for Team 1 ---
-        stats['team1_unused_spots'] = _calculate_unused_spots(days_in_week, team1_ranked_roster, lineup_settings)
+        stats['team1_unused_spots'] = _calculate_unused_spots(days_in_week, team1_ranked_roster, lineup_settings, simulated_moves)
 
 
         return jsonify(stats)
@@ -952,6 +998,7 @@ def get_roster_data():
     data = request.get_json()
     week_num = data.get('week')
     team_name = data.get('team_name')
+    simulated_moves = data.get('simulated_moves', [])
 
     conn, error_msg = get_db_connection_for_league(league_id)
     if not conn:
@@ -1008,37 +1055,56 @@ def get_roster_data():
         all_players_raw = cursor.fetchall()
         all_players = decode_dict_values([dict(row) for row in all_players_raw])
 
+        if simulated_moves:
+            dropped_player_ids = {int(m['dropped_player']['player_id']) for m in simulated_moves}
+            # Filter out dropped players
+            all_players = [p for p in all_players if int(p.get('player_id', 0)) not in dropped_player_ids]
+            # Add added players
+            for move in simulated_moves:
+                all_players.append(move['added_player'])
+
+
         # Get scoring categories to fetch rank columns
         cursor.execute("SELECT category FROM scoring")
         scoring_categories = [row['category'] for row in cursor.fetchall()]
         cat_rank_columns = [f"{cat}_cat_rank" for cat in scoring_categories]
 
         # Get player stats for all players to populate rank columns
-        all_normalized_names = [p['player_name_normalized'] for p in all_players]
+        all_normalized_names = [p.get('player_name_normalized') for p in all_players]
+        # Filter out the 'None' entries so the SQL query doesn't fail
+        valid_normalized_names = [name for name in all_normalized_names if name]
+
         player_stats = {}
-        if all_normalized_names:
-            placeholders = ','.join('?' for _ in all_normalized_names)
+        if valid_normalized_names: # Only query if we have valid names
+            placeholders = ','.join('?' for _ in valid_normalized_names)
             query = f"""
                 SELECT player_name_normalized, {', '.join(cat_rank_columns)}
                 FROM joined_player_stats WHERE player_name_normalized IN ({placeholders})
             """
-            cursor.execute(query, all_normalized_names)
+            cursor.execute(query, valid_normalized_names) # Use the filtered list
             player_stats = {row['player_name_normalized']: dict(row) for row in cursor.fetchall()}
 
         # Augment the full player list with all necessary data
+        player_custom_rank_map = {}
         active_player_map = {p['player_name']: p for p in active_players}
         for player in all_players:
             # Add ranks and this week's schedule from the active player data
             if player['player_name'] in active_player_map:
+                # This is a base roster player, get their schedule
                 source = active_player_map[player['player_name']]
                 player['total_rank'] = source.get('total_rank')
                 player['game_dates_this_week'] = source.get('game_dates_this_week', [])
                 player['games_this_week'] = [datetime.strptime(d, '%Y-%m-%d').strftime('%a') for d in player['game_dates_this_week']]
-            else: # Handle IR players
-                player['games_this_week'] = []
-                player['game_dates_this_week'] = []
+            else:
+                # This is either an IR player or a Simulated Player
+                # If 'games_this_week' is NOT on the object, it's an IR player. Set to [].
+                # If 'games_this_week' IS on the object, it's a Simulated Player. Do nothing, leave its data intact.
+                if 'games_this_week' not in player:
+                    player['games_this_week'] = []
+                if 'game_dates_this_week' not in player:
+                    player['game_dates_this_week'] = []
 
-            p_stats = player_stats.get(player['player_name_normalized'])
+            p_stats = player_stats.get(player.get('player_name_normalized'))
             new_total_rank = 0
             if p_stats:
                 for cat in all_scoring_categories:
@@ -1055,7 +1121,8 @@ def get_roster_data():
                         else:
                             new_total_rank += rank_value
             player['total_rank'] = round(new_total_rank, 2) if p_stats else None
-
+            if player.get('player_id'):
+                player_custom_rank_map[int(player['player_id'])] = player['total_rank']
             # Add category ranks for all players (active and inactive)
 #            p_stats = player_stats.get(player['player_name_normalized'])
 #            if p_stats:
@@ -1065,54 +1132,78 @@ def get_roster_data():
 
             player['games_next_week'] = []
             if start_date_next and end_date_next:
-                cursor.execute("SELECT schedule_json FROM team_schedules WHERE team_tricode = ?", (player['team'],))
-                schedule_row = cursor.fetchone()
-                if schedule_row and schedule_row['schedule_json']:
-                    schedule = json.loads(schedule_row['schedule_json'])
-                    for game_date_str in schedule:
-                        game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
-                        if start_date_next <= game_date <= end_date_next:
-                            player['games_next_week'].append(game_date.strftime('%a'))
+                player_team_tricode = player.get('team') or player.get('player_team')
+
+                if player_team_tricode: # Only proceed if we found a team tricode
+                    cursor.execute("SELECT schedule_json FROM team_schedules WHERE team_tricode = ?", (player_team_tricode,))
+                    schedule_row = cursor.fetchone()
+                    if schedule_row and schedule_row['schedule_json']:
+                        schedule = json.loads(schedule_row['schedule_json'])
+                        for game_date_str in schedule:
+                            game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+                            if start_date_next <= game_date <= end_date_next:
+                                player['games_next_week'].append(game_date.strftime('%a'))
 
         logging.info("Updating ranks for active_players list...")
         for player in active_players:
-            p_stats = player_stats.get(player['player_name_normalized'])
-            new_total_rank = 0
-            if p_stats:
-                for cat in all_scoring_categories:
-                    rank_key = f"{cat}_cat_rank"
-                    rank_value = p_stats.get(rank_key)
-
-                    # We don't need to store individual cat ranks here
-                    # as they are already on the player object from _get_ranked_roster_for_week
-                    if rank_value is not None:
-                        if cat in unchecked_categories:
-                            new_total_rank += rank_value / 10.0 # Using your / 10.0 logic
-                        else:
-                            new_total_rank += rank_value
-
-            player['total_rank'] = round(new_total_rank, 2) if p_stats else None
-
-            # Also ensure a default rank for players with no stats,
-            # matching get_optimal_lineup logic
-            if player.get('total_rank') is None:
+            custom_rank = player_custom_rank_map.get(int(player.get('player_id', 0)))
+            if custom_rank is not None:
+                player['total_rank'] = custom_rank
+            elif player.get('total_rank') is None: # Fallback for players w/o stats
                 player['total_rank'] = 60
+
+        # 2. Update simulated_moves list
+        logging.info("Updating ranks for simulated_moves list...")
+        for move in simulated_moves:
+            added_player = move['added_player']
+            # Use int for robust matching
+            custom_rank = player_custom_rank_map.get(int(added_player.get('player_id', 0)))
+            if custom_rank is not None:
+                added_player['total_rank'] = custom_rank
+            elif added_player.get('total_rank') is None: # Fallback
+                added_player['total_rank'] = 60
         logging.info("Finished updating ranks for active_players.")
+
+# We don't need to store individual cat ranks here
+# as they are already on the player object from _get_ranked_roster_for_week
+#if rank_value is not None:
+#    if cat in unchecked_categories:
+#        new_total_rank += rank_value / 10.0 # Using your / 10.0 logic
+#    else:
+#        new_total_rank += rank_value
 
 
         # Get lineup settings
         cursor.execute("SELECT position, position_count FROM lineup_settings WHERE position NOT IN ('BN', 'IR', 'IR+')")
         lineup_settings = {row['position']: row['position_count'] for row in cursor.fetchall()}
 
-        # --- Calculate optimal lineup and starts for each day ---
+# --- Calculate optimal lineup and starts for each day ---
         daily_optimal_lineups = {}
         player_starts_counter = Counter()
 
         for day_date in days_in_week:
             day_str = day_date.strftime('%Y-%m-%d')
-            players_playing_today = [
-                p for p in active_players if day_str in p.get('game_dates_this_week', [])
-            ]
+
+            # --- NEW: Build the roster for this specific day based on simulation ---
+            daily_active_roster = []
+            # Use int for robust matching
+            dropped_player_ids_today = {int(m['dropped_player']['player_id']) for m in simulated_moves if m['date'] <= day_str}
+
+            for p in active_players: # 1. Use base active roster
+                if int(p.get('player_id', 0)) not in dropped_player_ids_today:
+                    daily_active_roster.append(p)
+
+            for move in simulated_moves: # 2. Add simulated players
+                if move['date'] <= day_str:
+                    daily_active_roster.append(move['added_player'])
+            # --- END NEW ---
+
+            players_playing_today = []
+            for p in daily_active_roster:
+                # Check both keys for safety (base roster vs. sim player)
+                game_dates = p.get('game_dates_this_week') or p.get('game_dates_this_week_full', [])
+                if day_str in game_dates:
+                    players_playing_today.append(p)
 
             if players_playing_today:
                 optimal_lineup_for_day = get_optimal_lineup(
@@ -1124,14 +1215,15 @@ def get_roster_data():
 
                 for pos_players in optimal_lineup_for_day.values():
                     for player in pos_players:
-                        player_starts_counter[player['player_name']] += 1
+                        # Use player_id for counter, it's more reliable
+                        player_starts_counter[player['player_id']] += 1
 
         # Add starts count to the final player list
         for player in all_players:
-            player['starts_this_week'] = player_starts_counter.get(player['player_name'], 0)
+            player['starts_this_week'] = player_starts_counter.get(player.get('player_id'), 0)
 
         # --- Calculate Unused Roster Spots ---
-        unused_roster_spots = _calculate_unused_spots(days_in_week, active_players, lineup_settings)
+        unused_roster_spots = _calculate_unused_spots(days_in_week, active_players, lineup_settings, simulated_moves)
 
         return jsonify({
             'players': all_players,
@@ -1207,8 +1299,10 @@ def get_free_agent_data():
                             total_rank += rank_value
                 player['total_cat_rank'] = round(total_rank, 2)
 
-        # --- Calculate Unused Roster Spots for the SELECTED Team ---
+# --- Calculate Unused Roster Spots for the SELECTED Team ---
         unused_roster_spots = None
+        team_ranked_roster = [] # --- NEW: Initialize roster list
+        days_in_week_data = [] # --- NEW: Initialize dates list
         selected_team_name = request_data.get('team_name')
 
         if selected_team_name:
@@ -1222,6 +1316,12 @@ def get_free_agent_data():
                     start_date_obj = datetime.strptime(week_dates['start_date'], '%Y-%m-%d').date()
                     end_date_obj = datetime.strptime(week_dates['end_date'], '%Y-%m-%d').date()
                     days_in_week = [(start_date_obj + timedelta(days=i)) for i in range((end_date_obj - start_date_obj).days + 1)]
+
+                    # --- NEW: Populate dates for date picker (from today onwards) ---
+                    today_obj = date.today()
+                    for day in days_in_week:
+                        if day >= today_obj:
+                            days_in_week_data.append(day.isoformat())
 
                     cursor.execute("SELECT position, position_count FROM lineup_settings WHERE position NOT IN ('BN', 'IR', 'IR+')")
                     lineup_settings = {row['position']: row['position_count'] for row in cursor.fetchall()}
@@ -1239,7 +1339,9 @@ def get_free_agent_data():
             'scoring_categories': all_scoring_categories_for_checkboxes,
             'ranked_categories': all_scoring_categories,  # Send all categories for table columns
             'checked_categories': checked_categories,  # Send the list of checked categories
-            'unused_roster_spots': unused_roster_spots
+            'unused_roster_spots': unused_roster_spots,
+            'team_roster': [dict(p) for p in team_ranked_roster], # --- NEW: Send the roster
+            'week_dates': days_in_week_data # --- NEW: Send the valid transaction dates
         })
 
     except Exception as e:
