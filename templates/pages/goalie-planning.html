@@ -1,6 +1,35 @@
-<div class="space-y-4">
-    <h2 class="text-xl font-bold text-white flex items-center">Goalie Planning
-    <span class="help-icon" data-title="Goalie Planning Helo" data-text="This page will help you run through potential goalie scenarios to determine if it is worth risking a goalie start given your current stats. This will simulate a variety of game scenarios and what your final goalie stats would be in each outcome.">?</span>
-    </h2>
-    <p class="text-gray-400">Goalie Planning page content will go here.</p>
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h2 class="text-xl font-bold text-white flex items-center">Goalie Planning
+            <span class="help-icon" data-title="Goalie Planning Help" data-text="This page will help you run through potential goalie scenarios to determine if it is worth risking a goalie start given your current stats. This will simulate a variety of game scenarios and what your final goalie stats would be in each outcome.">?</span>
+        </h2>
+    </div>
+
+    <div id="db-error-message" class="hidden p-4 bg-red-800 border border-red-600 rounded-lg text-white">
+        Error loading database. Please initialize it on the 'League Database' page.
+    </div>
+
+    <div id="goalie-controls" class="hidden space-y-4 md:space-y-0 md:flex md:space-x-4">
+        <div class="flex-1">
+            <label for="opponent-select" class="block text-sm font-medium text-gray-300">Opponent</label>
+            <select id="opponent-select" class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></select>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div id="current-stats-container">
+            </div>
+
+        <div id="simulated-stats-container">
+            </div>
+
+        <div id="opponent-stats-container">
+            </div>
+    </div>
+
+    <div id="individual-starts-container" class="mt-6">
+        </div>
+
 </div>
+
+<script src="/static/goalie-planning.js" defer></script>

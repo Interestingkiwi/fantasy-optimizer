@@ -13,8 +13,8 @@ services:
     branch: main
     # Command to install dependencies
     buildCommand: "pip install -r requirements.txt"
-    # Command to start the web server, with an increased timeout of 120 seconds
-    startCommand: "gunicorn --timeout 120 'app:app'"
+    # Command to start the web server, with an increased timeout and async worker type
+    startCommand: "gunicorn app:app -w 4 -k gevent --timeout 120 --graceful-timeout 120"
     # Environment variables that need to be set in the Render dashboard
     envVars:
       - key: PYTHON_VERSION
@@ -25,3 +25,4 @@ services:
         sync: false
       - key: FLASK_SECRET_KEY
         generateValue: true # Render will generate a secret key for you
+
