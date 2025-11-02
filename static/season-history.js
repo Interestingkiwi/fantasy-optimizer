@@ -1,0 +1,536 @@
+(async function() {
+    // Wait for the DOM to be fully loaded before running
+    await new Promise(resolve => {
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", resolve);
+        } else {
+            resolve();
+        }
+    });
+
+    const errorDiv = document.getElementById('db-error-message');
+    const weekSelect = document.getElementById('history-week-select');
+    const yourTeamSelect = document.getElementById('your-team-select');
+    const reportSelect = document.getElementById('history-report-select');
+    const historyContent = document.getElementById('history-content');
+    const loadingSpinner = document.getElementById('loading-spinner');
+
+    let pageData = null;
+
+    function showError(message) {
+        errorDiv.textContent = message;
+        errorDiv.classList.remove('hidden');
+        historyContent.innerHTML = ''; // Clear content on error
+        loadingSpinner.classList.add('hidden');
+    }
+
+    async function fetchPageData() {
+        try {
+            const response = await fetch('/api/season_history_page_data');
+            if (!response.ok) {
+                throw new Error(`Failed to load page data. Server responded with ${response.status}`);
+            }
+            const data = await response.json();
+            if (!data.db_exists) {
+                showError(data.error || "Database not found. Please create one on the 'League Database' page.");
+                return false;
+            }
+            pageData = data; // Store data globally for this module
+            return true;
+        } catch (error) {
+            console.error('Error fetching page data:', error);
+            showError(`Error fetching page data: ${error.message}`);
+            return false;
+        }
+    }
+
+    function populateDropdowns() {
+        // --- Team Dropdown --- (Handled by home.js)
+
+        // --- Week Dropdown ---
+        const completedWeeks = pageData.weeks.filter(week => week.week_num < pageData.current_week);
+        let weekOptions = '<option value="all">All Season</option>';
+        weekOptions += completedWeeks.map(week =>
+            `<option value="${week.week_num}">
+                Week ${week.week_num} (${week.start_date} to ${week.end_date})
+            </option>`
+        ).join('');
+        weekSelect.innerHTML = weekOptions;
+        weekSelect.value = "all"; // Default to "All Season"
+
+        // --- Report Dropdown ---
+        let reportOptions = '';
+        reportOptions += '<option value="please_select">--Please Select--</option>'; // Your default
+        reportOptions += '<option value="bench_points">Bench Points</option>';
+        reportOptions += '<option value="tbd">TBD</option>';
+
+        reportSelect.innerHTML = reportOptions;
+    }
+
+    function setupEventListeners() {
+        weekSelect.addEventListener('change', fetchAndRenderTable);
+        yourTeamSelect.addEventListener('change', fetchAndRenderTable);
+        reportSelect.addEventListener('change', fetchAndRenderTable);
+    }
+
+    // --- NEW: Helper function to create a table ---
+    function createTable(title, headers, rows) {
+        let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                        <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
+
+        if (rows.length === 0) {
+            html += '<p class="text-gray-400">No data found for this period.</p></div>';
+            return html;
+        }
+
+        html += `<div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-700">
+                        <thead>
+                            <tr>
+                                <th class="table-header">Date</th>
+                                <th class="table-header">Player</th>
+                                <th class="table-header">Positions</th>
+                                `;
+
+        // Filter headers to only include those with data
+        const headersWithData = headers.filter(header =>
+            rows.some(row => row[header] && row[header] != 0)
+        );
+
+        for (const header of headersWithData) {
+            html += `<th class="table-header">${header}</th>`;
+        }
+
+        html += `           </tr>
+                        </thead>
+                        <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+        for (const row of rows) {
+            html += `<tr>
+                        <td class="table-cell text-center">${row['Date']}</td>
+                        <td class="table-cell text-center">${row['Player']}</td>
+                        <td class="table-cell text-center">${row['Positions'] || ''}</td>
+                        `;
+            for (const header of headersWithData) {
+                html += `<td class="table-cell text-center">${row[header] || 0}</td>`;
+            }
+            html += `</tr>`;
+        }
+
+        html += `       </tbody>
+                    </table>
+                </div>
+            </div>`;
+        return html;
+    }
+
+
+    function createMatchupStatsTable(matchup_data) {
+            const { your_team_stats, opponent_team_stats, opponent_name, scoring_categories } = matchup_data;
+
+            // --- START NEW LOGIC ---
+            // 1. Define goalie sub-category relationships
+            const goalieCats = {
+                'SVpct': ['SV', 'SA'],
+                'GAA': ['GA', 'TOI/G']
+            };
+            const scoringCategoriesSet = new Set(scoring_categories);
+
+            // 2. Create a set of categories to skip in the main loop
+            const catsToSkip = new Set();
+            if (scoringCategoriesSet.has('SVpct')) {
+                goalieCats['SVpct'].forEach(cat => catsToSkip.add(cat));
+            }
+            if (scoringCategoriesSet.has('GAA')) {
+                goalieCats['GAA'].forEach(cat => catsToSkip.add(cat));
+            }
+            // --- END NEW LOGIC ---
+
+            let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-white mb-3">Matchup Result</h3>
+                            <h4 class="text-sm text-gray-400 mb-3 -mt-2">vs. ${opponent_name}</h4>
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full">
+                                    <thead>
+                                        <tr>
+                                            <th class="table-header !text-left">Category</th>
+                                            <th class="table-header">You</th>
+                                            <th class="table-header">Opp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+            for (const category of scoring_categories) {
+
+                // --- START MODIFIED LOGIC ---
+                // 3. Skip rendering this category if it's a sub-category of one that exists
+                if (catsToSkip.has(category)) {
+                    continue;
+                }
+                // --- END MODIFIED LOGIC ---
+
+                const your_val = your_team_stats[category] || 0;
+                const opp_val = opponent_team_stats[category] || 0;
+
+                // Add styling for wins/losses
+                let your_class = 'text-gray-400';
+                let opp_class = 'text-gray-400';
+
+                // Handle reverse-scoring categories (GAA, GA)
+                if (['GAA', 'GA'].includes(category)) {
+                    if (your_val < opp_val) {
+                        your_class = 'text-green-400 font-bold';
+                    } else if (opp_val < your_val) {
+                        opp_class = 'text-green-400 font-bold';
+                    }
+                } else { // Handle normal scoring
+                    if (your_val > opp_val) {
+                        your_class = 'text-green-400 font-bold';
+                    } else if (opp_val > your_val) {
+                        opp_class = 'text-green-400 font-bold';
+                    }
+                }
+
+                // 4. Render the main category row (with a style fix to make winning cats bold)
+                html += `<tr>
+                            <td class="table-cell !text-left ${your_class.includes('font-bold') ? 'font-semibold' : ''}">${category}</td>
+                            <td class="table-cell text-center ${your_class}">${your_val}</td>
+                            <td class="table-cell text-center ${opp_class}">${opp_val}</td>
+                         </tr>`;
+
+                // --- START NEW LOGIC ---
+                // 5. Check for and render sub-categories
+                if (goalieCats.hasOwnProperty(category)) {
+                    for (const subCat of goalieCats[category]) {
+                        // Get sub-cat values (no win/loss styling)
+                        const your_sub_val = your_team_stats[subCat] || 0;
+                        const opp_sub_val = opponent_team_stats[subCat] || 0;
+
+                        html += `<tr class="hover:bg-gray-700/50">
+                                    <td class="table-cell !text-left pl-8 text-sm text-gray-400">${subCat}</td>
+                                    <td class="table-cell text-center text-sm text-gray-400">${your_sub_val}</td>
+                                    <td class="table-cell text-center text-sm text-gray-400">${opp_sub_val}</td>
+                                </tr>`;
+                    }
+                }
+                // --- END NEW LOGIC ---
+            }
+
+            html += `           </tbody>
+                            </table>
+                        </div>
+                    </div>`;
+            return html;
+        }
+
+
+        function createOptimizedMatchupTable(optimized_data, original_data) {
+
+            const { your_team_stats, opponent_team_stats, opponent_name, scoring_categories } = optimized_data;
+            const original_your_stats = original_data.your_team_stats;
+
+            // --- Define goalie sub-category relationships ---
+            const goalieCats = {
+                'SVpct': ['SV', 'SA'],
+                'GAA': ['GA', 'TOI/G']
+            };
+            const scoringCategoriesSet = new Set(scoring_categories);
+            const catsToSkip = new Set();
+            if (scoringCategoriesSet.has('SVpct')) {
+                goalieCats['SVpct'].forEach(cat => catsToSkip.add(cat));
+            }
+            if (scoringCategoriesSet.has('GAA')) {
+                goalieCats['GAA'].forEach(cat => catsToSkip.add(cat));
+            }
+
+            // --- Helper function for scoring ---
+            const getPoints = (my_val, opp_val, is_reverse) => {
+                if ((my_val > opp_val && !is_reverse) || (my_val < opp_val && is_reverse)) {
+                    return 2; // Win
+                }
+                if (my_val === opp_val) {
+                    return 1; // Tie
+                }
+                return 0; // Loss
+            };
+
+            let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-white mb-3">Maximized Result (What If)</h3>
+                            <h4 class="text-sm text-gray-400 mb-3 -mt-2">vs. ${opponent_name}</h4>
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full">
+                                    <thead>
+                                        <tr>
+                                            <th class="table-header !text-left">Category</th>
+                                            <th class="table-header">You (Opt)</th>
+                                            <th class="table-header">Opp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+            for (const category of scoring_categories) {
+                if (catsToSkip.has(category)) continue;
+
+                const your_val = your_team_stats[category] || 0;
+                const opp_val = opponent_team_stats[category] || 0;
+                const original_val = original_your_stats[category] || 0;
+
+                const is_reverse = ['GAA', 'GA'].includes(category);
+
+                // --- Calculate points for highlighting ---
+                const original_points = getPoints(original_val, opp_val, is_reverse);
+                const new_points = getPoints(your_val, opp_val, is_reverse);
+
+                let highlight_class = '';
+                if (new_points > original_points) {
+                    if (new_points === 2) highlight_class = 'bg-green-600/30'; // Became a Win
+                    else if (new_points === 1) highlight_class = 'bg-yellow-600/30'; // Became a Tie
+                } else if (new_points < original_points) {
+                    highlight_class = 'bg-red-600/30'; // Became a Loss
+                }
+
+                // --- Get win/loss text styling ---
+                let your_class = 'text-gray-400';
+                let opp_class = 'text-gray-400';
+
+                if (is_reverse) {
+                    if (your_val < opp_val) your_class = 'text-green-400 font-bold';
+                    else if (opp_val < your_val) opp_class = 'text-green-400 font-bold';
+                } else {
+                    if (your_val > opp_val) your_class = 'text-green-400 font-bold';
+                    else if (opp_val > your_val) opp_class = 'text-green-400 font-bold';
+                }
+
+                // --- Render the main category row ---
+                html += `<tr class="${highlight_class}">
+                            <td class="table-cell !text-left ${your_class.includes('font-bold') ? 'font-semibold' : ''}">${category}</td>
+                            <td class="table-cell text-center ${your_class}">${your_val}</td>
+                            <td class="table-cell text-center ${opp_class}">${opp_val}</td>
+                         </tr>`;
+
+                // --- Render sub-categories (no highlighting) ---
+                if (goalieCats.hasOwnProperty(category)) {
+                    for (const subCat of goalieCats[category]) {
+                        const your_sub_val = your_team_stats[subCat] || 0;
+                        const opp_sub_val = opponent_team_stats[subCat] || 0;
+                        html += `<tr class="hover:bg-gray-700/50">
+                                    <td class="table-cell !text-left pl-8 text-sm text-gray-400">${subCat}</td>
+                                    <td class="table-cell text-center text-sm text-gray-400">${your_sub_val}</td>
+                                    <td class="table-cell text-center text-sm text-gray-400">${opp_sub_val}</td>
+                                </tr>`;
+                    }
+                }
+            }
+            html += `           </tbody>
+                            </table>
+                        </div>
+                    </div>`;
+            return html;
+        }
+
+
+        function createSwapsStatTable(swaps_log, skater_headers, goalie_headers) {
+                const all_headers = [...skater_headers, ...goalie_headers];
+
+                // Filter headers to only those that actually changed
+                const headers_with_changes = all_headers.filter(header =>
+                    swaps_log.some(swap => swap.stat_diffs[header])
+                );
+
+                let html = `<div class"bg-gray-800 rounded-lg shadow-lg p-4">
+                                <h3 class="text-lg font-semibold text-white mb-3">Ideal Roster</h3>`;
+
+                if (swaps_log.length === 0) {
+                    html += '<p class="text-gray-400">No beneficial swaps were found.</p></div>';
+                    return html;
+                }
+
+                html += `<div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-700">
+                                <thead>
+                                    <tr>
+                                        <th class="table-header">Date</th>
+                                        <th class="table-header">Bench Player</th>
+                                        <th class="table-header">Replaced Player</th>
+                                        `;
+
+                // Create headers
+                for (const header of headers_with_changes) {
+                    html += `<th class="table-header">${header}</th>`;
+                }
+
+                html += `       </tr>
+                                </thead>
+                                <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+                const totals = {};
+
+                // Create data rows
+                for (const swap of swaps_log) {
+                    html += `<tr>
+                                <td class="table-cell text-center">${swap.date}</td>
+                                <td class="table-cell text-center text-green-400">${swap.bench_player}</td>
+                                <td class="table-cell text-center text-red-400">${swap.replaced_player}</td>
+                             `;
+
+                    for (const header of headers_with_changes) {
+                        const diff = swap.stat_diffs[header] || 0;
+
+                        // Add to totals
+                        totals[header] = (totals[header] || 0) + diff;
+
+                        // Format the diff
+                        let diff_text = diff === 0 ? '0' : (diff > 0 ? `+${diff}` : `${diff}`);
+                        let diff_class = diff > 0 ? 'text-green-400' : (diff < 0 ? 'text-red-400' : 'text-gray-500');
+
+                        html += `<td class="table-cell text-center ${diff_class}">${diff_text}</td>`;
+                    }
+                    html += `</tr>`;
+                }
+
+                // --- Create Total Row ---
+                html += `<tr class="border-t-2 border-gray-500">
+                            <td class="table-cell text-center font-bold">Total</td>
+                            <td class="table-cell"></td>
+                            <td class="table-cell"></td>
+                         `;
+
+                for (const header of headers_with_changes) {
+                    const total_diff = totals[header] || 0;
+
+                    let diff_text = total_diff === 0 ? '0' : (total_diff > 0 ? `+${total_diff}` : `${total_diff}`);
+                    let diff_class = total_diff > 0 ? 'text-green-400' : (total_diff < 0 ? 'text-red-400' : 'text-gray-500');
+
+                    html += `<td class="table-cell text-center ${diff_class} font-bold">${diff_text}</td>`;
+                }
+
+                html += `       </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>`;
+                return html;
+            }
+
+
+    // --- NEW: Function to fetch and render bench points ---
+    async function fetchBenchPoints(teamName, week) {
+        loadingSpinner.classList.remove('hidden');
+        historyContent.innerHTML = '';
+        errorDiv.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/history/bench_points', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ team_name: teamName, week: week })
+            });
+
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+
+            // Render the two bench tables
+            const skaterTable = createTable('Skaters', data.skater_headers, data.skater_data);
+            const goalieTable = createTable('Goalies', data.goalie_headers, data.goalie_data);
+
+            // --- START MODIFIED LAYOUT ---
+            let matchupHtml = '';
+            let optimizedHtml = '';
+            let swapsHtml = ''; // This will now go to the left column
+
+            if (data.matchup_data) {
+                // If matchup data exists, render the original table
+                matchupHtml = createMatchupStatsTable(data.matchup_data);
+
+                // Render the new "Optimized" table
+                optimizedHtml = createOptimizedMatchupTable(data.optimized_matchup_data, data.matchup_data);
+
+                // --- Render the new "Swaps Stat Table" ---
+                swapsHtml = createSwapsStatTable(data.swaps_log, data.skater_headers, data.goalie_headers);
+
+            } else {
+                // Otherwise, show the "All Season" message
+                matchupHtml = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                                <h3 class="text-lg font-semibold text-white mb-3">Matchup Result</h3>
+                                <p class="text-gray-400">Matchup outcome unavailable when "All Season" is selected.</p>
+                               </div>`;
+            }
+
+            // --- New Layout Structure ---
+            historyContent.innerHTML = `
+                <div class="flex flex-col lg:flex-row gap-6">
+
+                    <div class="flex-grow space-y-6">
+                        ${skaterTable}
+                        ${goalieTable}
+                        ${swapsHtml}
+                    </div>
+
+                    <div class="w-full lg:w-2/5 xl:w-1/2 flex-shrink-0 space-y-6">
+
+                        <div class="flex flex-col lg:flex-row gap-6">
+                            <div class="w-full lg:w-1/2">
+                                ${matchupHtml}
+                            </div>
+                            <div class="w-full lg:w-1/2">
+                                ${optimizedHtml}
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            `;
+            // --- END MODIFIED LAYOUT ---
+
+        } catch (error) {
+            console.error('Error fetching bench points:', error);
+            showError(error.message);
+        } finally {
+            loadingSpinner.classList.add('hidden');
+        }
+    }
+
+
+    async function fetchAndRenderTable() {
+            const selectedTeam = yourTeamSelect.value;
+            const selectedWeek = weekSelect.value;
+            const selectedReport = reportSelect.value;
+
+            console.log(`Fetching data for: Team ${selectedTeam}, Week ${selectedWeek}, Report ${selectedReport}`);
+
+            // Route based on the selected report
+            switch (selectedReport) {
+                case 'bench_points':
+                    await fetchBenchPoints(selectedTeam, selectedWeek);
+                    break;
+
+                case 'tbd':
+                    loadingSpinner.classList.remove('hidden');
+                    historyContent.innerHTML = `<p class="text-gray-400">The "TBD" report is not yet implemented.</p>`;
+                    loadingSpinner.classList.add('hidden');
+                    break;
+
+                case 'please_select':
+                default:
+                    loadingSpinner.classList.add('hidden');
+                    historyContent.innerHTML = `<p class="text-gray-400">Please select a report to view.</p>`;
+                    break;
+            }
+        }
+
+
+    async function init() {
+        loadingSpinner.classList.remove('hidden');
+        const success = await fetchPageData();
+        if (success) {
+            populateDropdowns();
+            setupEventListeners();
+            await fetchAndRenderTable(); // Load initial data (will show "Please select")
+        }
+    }
+
+    init();
+
+})();
