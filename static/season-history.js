@@ -15,6 +15,12 @@
     const historyContent = document.getElementById('history-content');
     const loadingSpinner = document.getElementById('loading-spinner');
 
+    // --- NEW: Add toggle button and team select wrapper ---
+    const viewToggleButton = document.getElementById('view-toggle-button');
+    const teamSelectWrapper = document.getElementById('team-select-wrapper');
+    let currentViewMode = 'team'; // 'team' or 'league'
+    // --- END NEW ---
+
     let pageData = null;
 
     function showError(message) {
@@ -62,6 +68,7 @@
         let reportOptions = '';
         reportOptions += '<option value="please_select">--Please Select--</option>'; // Your default
         reportOptions += '<option value="bench_points">Bench Points</option>';
+        reportOptions += '<option value="transaction_history">Transaction History</option>';
         reportOptions += '<option value="tbd">TBD</option>';
 
         reportSelect.innerHTML = reportOptions;
@@ -70,10 +77,57 @@
     function setupEventListeners() {
         weekSelect.addEventListener('change', fetchAndRenderTable);
         yourTeamSelect.addEventListener('change', fetchAndRenderTable);
-        reportSelect.addEventListener('change', fetchAndRenderTable);
+        reportSelect.addEventListener('change', handleReportChange); // --- MODIFIED ---
+        viewToggleButton.addEventListener('click', toggleViewMode); // --- NEW ---
     }
 
-    // --- NEW: Helper function to create a table ---
+    // --- NEW: Show/hide controls based on report ---
+    function handleReportChange() {
+        const selectedReport = reportSelect.value;
+        if (selectedReport === 'transaction_history') {
+            viewToggleButton.classList.remove('hidden');
+            // Restore view state
+            updateControlsForViewMode();
+        } else {
+            viewToggleButton.classList.add('hidden');
+            // Always show team select for other reports
+            teamSelectWrapper.classList.remove('hidden');
+        }
+        fetchAndRenderTable();
+    }
+
+    // --- NEW: Toggle view mode logic ---
+    function toggleViewMode() {
+        currentViewMode = (currentViewMode === 'team') ? 'league' : 'team';
+        updateControlsForViewMode();
+        fetchAndRenderTable();
+    }
+
+    // --- NEW: Update UI based on view mode ---
+    function updateControlsForViewMode() {
+        if (currentViewMode === 'league') {
+            viewToggleButton.textContent = 'Switch to Team View';
+            viewToggleButton.classList.replace('bg-blue-600', 'bg-indigo-600');
+            viewToggleButton.classList.replace('hover:bg-blue-700', 'hover:bg-indigo-700');
+            teamSelectWrapper.classList.add('hidden'); // Hide team select in league view
+
+            // --- NEW: Disable "All Season" in league view ---
+            if (weekSelect.value === 'all') {
+                weekSelect.value = pageData.weeks.filter(w => w.week_num < pageData.current_week)[0]?.week_num || '1';
+            }
+            weekSelect.querySelector('option[value="all"]').disabled = true;
+
+        } else { // 'team' view
+            viewToggleButton.textContent = 'Switch to League View';
+            viewToggleButton.classList.replace('bg-indigo-600', 'bg-blue-600');
+            viewToggleButton.classList.replace('hover:bg-indigo-700', 'hover:bg-blue-700');
+            teamSelectWrapper.classList.remove('hidden'); // Show team select
+            weekSelect.querySelector('option[value="all"]').disabled = false; // Re-enable "All Season"
+        }
+    }
+
+
+    // --- Helper function to create a table ---
     function createTable(title, headers, rows) {
         let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
                         <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
@@ -413,7 +467,7 @@
             }
 
 
-    // --- NEW: Function to fetch and render bench points ---
+    // --- Function to fetch and render bench points ---
     async function fetchBenchPoints(teamName, week) {
         loadingSpinner.classList.remove('hidden');
         historyContent.innerHTML = '';
@@ -492,19 +546,219 @@
         }
     }
 
+    // --- Helper function to create a simple transaction table ---
+    function createTransactionTable(title, rows) {
+        let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                        <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
 
+        if (!rows || rows.length === 0) {
+            html += '<p class="text-gray-400">No transactions found for this period.</p></div>';
+            return html;
+        }
+
+        html += `<div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-700">
+                        <thead>
+                            <tr>
+                                <th class="table-header !text-left">Date</th>
+                                <th class="table-header !text-left">Player</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+        for (const row of rows) {
+            html += `<tr>
+                        <td class="table-cell !text-left">${row['transaction_date']}</td>
+                        <td class="table-cell !text-left">${row['player_name']}</td>
+                     </tr>`;
+        }
+
+        html += `       </tbody>
+                    </table>
+                </div>
+            </div>`;
+        return html;
+    }
+
+
+    // --- Helper function to create the added player stats table ---
+    // --- MODIFIED: Added defaults for headers and rows to prevent undefined errors ---
+    function createAddedPlayerStatsTable(title, headers = [], rows = []) {
+        let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                        <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
+
+        if (rows.length === 0) {
+            // --- MODIFIED: More specific message ---
+            html += `<p class="text-gray-400">No ${title.toLowerCase()} found or no stats recorded.</p></div>`;
+            return html;
+        }
+
+        html += `<div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-700">
+                        <thead>
+                            <tr>
+                                <th class="table-header !text-left">Player</th>
+                                <th class="table-header">GP</th>
+                                `;
+
+        // --- MODIFIED: Use all headers, don't filter ---
+        // Use all headers provided by the server
+        const headersToDisplay = headers.filter(h => h !== 'GP'); // Still exclude GP, as it's manually added
+
+        for (const header of headersToDisplay) {
+            html += `<th class="table-header">${header}</th>`;
+        }
+        // --- END MODIFICATION ---
+
+        html += `           </tr>
+                        </thead>
+                        <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+        for (const row of rows) {
+            html += `<tr>
+                        <td class="table-cell !text-left">${row['Player']}</td>
+                        <td class="table-cell text-center">${row['GP'] || 0}</td>
+                        `;
+            // --- MODIFIED: Loop over all headers ---
+            for (const header of headersToDisplay) {
+                html += `<td class="table-cell text-center">${row[header] || 0}</td>`;
+            }
+            // --- END MODIFICATION ---
+            html += `</tr>`;
+        }
+
+        html += `       </tbody>
+                    </table>
+                </div>
+            </div>`;
+        return html;
+    }
+
+
+    // --- MODIFIED: Function to fetch and render transaction success ---
+    async function fetchTransactionSuccess(teamName, week, viewMode) {
+        loadingSpinner.classList.remove('hidden');
+        historyContent.innerHTML = '';
+        errorDiv.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/history/transaction_history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // --- MODIFIED: Send the viewMode ---
+                body: JSON.stringify({
+                    team_name: teamName,
+                    week: week,
+                    view_mode: viewMode
+                })
+            });
+
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+
+            // --- NEW: Handle different view modes ---
+            if (data.view_mode === 'team') {
+                // --- TEAM VIEW LOGIC ---
+                const addsTable = createTransactionTable('Player Adds', data.adds);
+                const dropsTable = createTransactionTable('Player Drops', data.drops);
+
+                let skaterStatsHtml = '';
+                let goalieStatsHtml = '';
+
+                if (data.is_weekly_view) {
+                    skaterStatsHtml = createAddedPlayerStatsTable(
+                        'Added Skater Contributions',
+                        data.skater_stat_headers,
+                        data.added_skater_stats
+                    );
+                    goalieStatsHtml = createAddedPlayerStatsTable(
+                        'Added Goalie Contributions',
+                        data.goalie_stat_headers,
+                        data.added_goalie_stats
+                    );
+                }
+
+                historyContent.innerHTML = `
+                    <div class="flex flex-col lg:flex-row gap-6">
+                        <div class="w-full lg:w-1/2 space-y-6">
+                            ${addsTable}
+                            ${skaterStatsHtml}
+                            ${goalieStatsHtml}
+                        </div>
+                        <div class="w-full lg:w-1/2">
+                            ${dropsTable}
+                        </div>
+                    </div>
+                `;
+
+            } else if (data.view_mode === 'league') {
+                // --- LEAGUE VIEW LOGIC ---
+                let leagueHtml = '';
+                const teamNames = Object.keys(data.league_data).sort();
+
+                if (teamNames.length === 0) {
+                     leagueHtml = '<p class="text-gray-400">No transactions found for any team this week.</p>';
+                }
+
+                for (const teamName of teamNames) {
+                    const teamData = data.league_data[teamName];
+                    const skaterStatsHtml = createAddedPlayerStatsTable(
+                        'Skaters',
+                        data.skater_stat_headers,
+                        teamData.skaters
+                    );
+                    const goalieStatsHtml = createAddedPlayerStatsTable(
+                        'Goalies',
+                        data.goalie_stat_headers,
+                        teamData.goalies
+                    );
+
+                    leagueHtml += `
+                        <div class="bg-gray-900 rounded-lg shadow-lg p-4 space-y-4">
+                            <h2 class="text-xl font-semibold text-white">${teamName}</h2>
+                            ${skaterStatsHtml}
+                            ${goalieStatsHtml}
+                        </div>
+                    `;
+                }
+
+                // --- MODIFICATION: Replaced single-column layout with a 3-column grid ---
+                // This will be 1 column on small, 2 on medium, and 3 on extra-large screens.
+                historyContent.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">${leagueHtml}</div>`;
+                // --- END MODIFICATION ---
+
+            }
+            // --- END NEW ---
+
+        } catch (error) {
+            console.error('Error fetching transaction data:', error);
+            showError(error.message);
+        } finally {
+            loadingSpinner.classList.add('hidden');
+        }
+    }
+
+
+    // --- MODIFIED: fetchAndRenderTable to pass view mode ---
     async function fetchAndRenderTable() {
             const selectedTeam = yourTeamSelect.value;
             const selectedWeek = weekSelect.value;
             const selectedReport = reportSelect.value;
 
-            console.log(`Fetching data for: Team ${selectedTeam}, Week ${selectedWeek}, Report ${selectedReport}`);
+            // --- MODIFIED: Pass currentViewMode to transaction report ---
+            console.log(`Fetching data for: Team ${selectedTeam}, Week ${selectedWeek}, Report ${selectedReport}, View ${currentViewMode}`);
 
             // Route based on the selected report
             switch (selectedReport) {
                 case 'bench_points':
                     await fetchBenchPoints(selectedTeam, selectedWeek);
                     break;
+
+                case 'transaction_history':
+                    await fetchTransactionSuccess(selectedTeam, selectedWeek, currentViewMode);
+                    break;
+                // --- END MODIFICATION ---
 
                 case 'tbd':
                     loadingSpinner.classList.remove('hidden');
@@ -528,6 +782,8 @@
             populateDropdowns();
             setupEventListeners();
             await fetchAndRenderTable(); // Load initial data (will show "Please select")
+            // Initially hide the toggle button until a report is selected
+            handleReportChange();
         }
     }
 

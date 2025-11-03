@@ -37,7 +37,6 @@ DATA_DIR = '/var/data/dbs'
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
-SERVER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'server')
 TEST_DB_FILENAME = 'yahoo-22705-Albany Hockey Hooligans Test.db'
 TEST_DB_PATH = os.path.join(SERVER_DIR, TEST_DB_FILENAME)
 
@@ -1483,6 +1482,270 @@ def get_bench_points_data():
     finally:
         if conn:
             conn.close()
+
+
+@app.route('/api/history/transaction_history', methods=['POST'])
+def get_transaction_history_data():
+    league_id = session.get('league_id')
+    conn, error_msg = get_db_connection_for_league(league_id)
+    if not conn:
+        return jsonify({'error': error_msg}), 404
+
+    try:
+        cursor = conn.cursor()
+        data = request.get_json()
+        team_name = data.get('team_name')
+        week = data.get('week')
+        # NEW: Get the view mode, default to 'team'
+        view_mode = data.get('view_mode', 'team')
+
+        logging.info(f"--- Transaction Success Report ---")
+        logging.info(f"Selected team: {team_name}, week: '{week}', view_mode: '{view_mode}'")
+
+        # --- MODIFIED: Get scoring group to differentiate skaters/goalies ---
+        cursor.execute("SELECT category, scoring_group FROM scoring ORDER BY scoring_group DESC, stat_id")
+        all_categories_raw = cursor.fetchall()
+        skater_categories = [row['category'] for row in all_categories_raw if row['scoring_group'] == 'offense']
+        goalie_categories = [row['category'] for row in all_categories_raw if row['scoring_group'] == 'goaltending']
+        # --- END MODIFIED ---
+
+        start_date, end_date = None, None
+        is_weekly_view = False
+
+        if week != 'all':
+            is_weekly_view = True
+            try:
+                week_num_int = int(week)
+                cursor.execute("SELECT start_date, end_date FROM weeks WHERE week_num = ?", (week_num_int,))
+                week_dates = cursor.fetchone()
+                if week_dates:
+                    start_date = week_dates['start_date']
+                    end_date = week_dates['end_date']
+                    logging.info(f"Found week dates: {start_date} to {end_date}")
+                else:
+                    logging.warning(f"Could not find week_num = {week_num_int}")
+                    is_weekly_view = False
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Invalid week format.'}), 400
+
+        # --- NEW: Logic split for Team vs League View ---
+
+        if view_mode == 'team':
+            # --- This is the existing logic for Team View ---
+            # --- MODIFIED: Create separate lists for skaters and goalies ---
+            added_skater_stats = []
+            added_goalie_stats = []
+            # --- END MODIFIED ---
+
+            def fetch_transactions(move_type):
+                sql_params = [team_name, move_type]
+                sql_query = """
+                    SELECT transaction_date, player_name, player_id
+                    FROM transactions
+                    WHERE CAST(fantasy_team AS TEXT) = ? AND move_type = ?
+                """
+                if start_date and end_date:
+                    sql_query += " AND transaction_date >= ? AND transaction_date <= ?"
+                    sql_params.extend([start_date, end_date])
+
+                sql_query += " ORDER BY transaction_date, player_name"
+                cursor.execute(sql_query, tuple(sql_params))
+                return decode_dict_values([dict(row) for row in cursor.fetchall()])
+
+            add_rows = fetch_transactions('add')
+            drop_rows = fetch_transactions('drop')
+            logging.info(f"Found {len(add_rows)} adds and {len(drop_rows)} drops for team '{team_name}'.")
+
+            if is_weekly_view and add_rows:
+                logging.info("Fetching weekly stats for added players (Team View)...")
+                for player in add_rows:
+                    player_stats = {'Player': player['player_name'], 'GP': 0}
+                    player_id_str = str(player['player_id'])
+
+                    # --- REVERTED: Query 1: Check for 'g' in daily_player_stats ---
+                    cursor.execute("""
+                        SELECT 1
+                        FROM daily_player_stats
+                        WHERE CAST(player_id AS TEXT) = ?
+                          AND date_ >= ? AND date_ <= ?
+                          AND lineup_pos = 'g'
+                        LIMIT 1
+                    """, (player_id_str, start_date, end_date))
+                    is_goalie = cursor.fetchone() is not None
+                    # --- END REVERTED ---
+
+                    # --- Query 2: Get aggregated stats (simplified) ---
+                    cursor.execute("""
+                        SELECT category, SUM(stat_value) as total
+                        FROM daily_player_stats
+                        WHERE CAST(player_id AS TEXT) = ?
+                          AND date_ >= ? AND date_ <= ?
+                        GROUP BY category
+                    """, (player_id_str, start_date, end_date))
+
+                    stats_raw = cursor.fetchall()
+                    player_stat_map = {row['category']: row['total'] for row in stats_raw}
+
+                    # --- MODIFIED: Query 3: Get Games Played with non-zero stats ---
+                    cursor.execute("""
+                        SELECT COUNT(T.date_) as games_played
+                        FROM (
+                            SELECT date_, SUM(stat_value) as total_stats
+                            FROM daily_player_stats
+                            WHERE CAST(player_id AS TEXT) = ?
+                              AND date_ >= ? AND date_ <= ?
+                            GROUP BY date_
+                            HAVING total_stats > 0
+                        ) T
+                    """, (player_id_str, start_date, end_date))
+
+                    gp_row = cursor.fetchone()
+                    if gp_row:
+                        player_stats['GP'] = gp_row['games_played']
+                    # --- END MODIFIED ---
+
+                    # --- MODIFIED: Populate based on position and fill 0s ---
+                    if is_goalie:
+                        for cat in goalie_categories:
+                            player_stats[cat] = player_stat_map.get(cat, 0)
+                        added_goalie_stats.append(player_stats)
+                    else:
+                        for cat in skater_categories:
+                            player_stats[cat] = player_stat_map.get(cat, 0)
+                        added_skater_stats.append(player_stats)
+                    # --- END MODIFIED ---
+
+            return jsonify({
+                'view_mode': 'team',
+                'adds': add_rows,
+                'drops': drop_rows,
+                # --- MODIFIED: Send separate lists and headers ---
+                'added_skater_stats': added_skater_stats,
+                'added_goalie_stats': added_goalie_stats,
+                'skater_stat_headers': skater_categories,
+                'goalie_stat_headers': goalie_categories,
+                # --- END MODIFIED ---
+                'is_weekly_view': is_weekly_view
+            })
+
+        elif view_mode == 'league':
+            # --- This is the new logic for League View ---
+            if not is_weekly_view:
+                return jsonify({'error': 'League View requires a specific week to be selected.'}), 400
+
+            # Get team name -> team_id map
+            cursor.execute("SELECT team_id, name FROM teams")
+
+            # --- MODIFIED: Decode bytes to string, then strip whitespace ---
+            teams_map = {row['name'].decode('utf-8').strip(): row['team_id'] for row in cursor.fetchall()}
+
+            # --- NEW DEBUGGING ---
+            logging.info(f"Team map keys: {list(teams_map.keys())}")
+            # --- END DEBUGGING ---
+
+            # Get all 'add' transactions for the week
+            cursor.execute("""
+                SELECT transaction_date, player_name, player_id, fantasy_team
+                FROM transactions
+                WHERE move_type = 'add'
+                  AND transaction_date >= ? AND transaction_date <= ?
+                ORDER BY fantasy_team, transaction_date, player_name
+            """, (start_date, end_date))
+
+            all_adds = decode_dict_values([dict(row) for row in cursor.fetchall()])
+            logging.info(f"Found {len(all_adds)} total adds for the league in week {week}.")
+
+            # --- MODIFIED: league_data to hold skater/goalie lists ---
+            league_data = defaultdict(lambda: {'skaters': [], 'goalies': []})
+            # --- END MODIFIED ---
+
+            for player in all_adds:
+                # --- MODIFIED: Strip whitespace from transaction team name before lookup ---
+                team_name = player['fantasy_team'].strip()
+                team_id = teams_map.get(team_name)
+
+                # --- NEW DEBUGGING ---
+                if team_id is None:
+                    logging.warning(f"Lookup failed for team: '{team_name}' (Original from transactions: '{player['fantasy_team']}')")
+                # --- END DEBUGGING ---
+
+                if not team_id:
+                    logging.warning(f"Skipping player {player['player_name']}: could not find team_id for team '{team_name}'.")
+                    continue
+
+                player_id_str = str(player['player_id'])
+                player_stats = {'Player': player['player_name'], 'GP': 0}
+
+                # --- REVERTED: Query 1: Check for 'g' in daily_player_stats ---
+                cursor.execute("""
+                    SELECT 1
+                    FROM daily_player_stats
+                    WHERE CAST(player_id AS TEXT) = ? AND team_id = ?
+                      AND date_ >= ? AND date_ <= ?
+                      AND lineup_pos = 'g'
+                    LIMIT 1
+                """, (player_id_str, team_id, start_date, end_date))
+                is_goalie = cursor.fetchone() is not None
+                # --- END REVERTED ---
+
+                # --- Query 2: Get aggregated stats (simplified) ---
+                cursor.execute("""
+                    SELECT category, SUM(stat_value) as total
+                    FROM daily_player_stats
+                    WHERE CAST(player_id AS TEXT) = ? AND team_id = ?
+                      AND date_ >= ? AND date_ <= ?
+                    GROUP BY category
+                """, (player_id_str, team_id, start_date, end_date))
+
+                stats_raw = cursor.fetchall()
+                player_stat_map = {row['category']: row['total'] for row in stats_raw}
+
+                # --- MODIFIED: Query 3: Get Games Played with non-zero stats *for that team* ---
+                cursor.execute("""
+                    SELECT COUNT(T.date_) as games_played
+                    FROM (
+                        SELECT date_, SUM(stat_value) as total_stats
+                        FROM daily_player_stats
+                        WHERE CAST(player_id AS TEXT) = ? AND team_id = ?
+                          AND date_ >= ? AND date_ <= ?
+                        GROUP BY date_
+                        HAVING total_stats > 0
+                    ) T
+                """, (player_id_str, team_id, start_date, end_date))
+
+                gp_row = cursor.fetchone()
+                if gp_row:
+                    player_stats['GP'] = gp_row['games_played']
+                # --- END MODIFIED ---
+
+                # --- MODIFIED: Populate based on position and fill 0s ---
+                if is_goalie:
+                    for cat in goalie_categories:
+                        player_stats[cat] = player_stat_map.get(cat, 0)
+                    league_data[team_name]['goalies'].append(player_stats)
+                else:
+                    for cat in skater_categories:
+                        player_stats[cat] = player_stat_map.get(cat, 0)
+                    league_data[team_name]['skaters'].append(player_stats)
+                # --- END MODIFIED ---
+
+            return jsonify({
+                'view_mode': 'league',
+                'league_data': league_data,
+                # --- MODIFIED: Send separate headers ---
+                'skater_stat_headers': skater_categories,
+                'goalie_stat_headers': goalie_categories,
+                # --- END MODIFIED ---
+                'is_weekly_view': True # League view is always weekly for now
+            })
+
+    except Exception as e:
+        logging.error(f"Error fetching transaction data: {e}", exc_info=True)
+        return jsonify({'error': f"An error occurred: {e}"}), 500
+    finally:
+        if conn:
+            conn.close()
+
 
 @app.route('/api/roster_data', methods=['POST'])
 def get_roster_data():
