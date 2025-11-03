@@ -37,6 +37,7 @@ DATA_DIR = '/var/data/dbs'
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
+SERVER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'server')
 TEST_DB_FILENAME = 'yahoo-22705-Albany Hockey Hooligans Test.db'
 TEST_DB_PATH = os.path.join(SERVER_DIR, TEST_DB_FILENAME)
 
