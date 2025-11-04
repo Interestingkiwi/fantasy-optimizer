@@ -1111,27 +1111,54 @@ def _update_league_transactions(yq, cursor):
     Writes player name, fantasy team id, add or drop, and yahoo id to transactions
     table for all transactions in the league
     """
+
+    # --- NEW: Clear the table first to prevent duplicates ---
+    try:
+        logging.info("Clearing existing transaction data...")
+        cursor.execute("DELETE FROM transactions")
+    except Exception as e:
+        logging.error(f"Failed to clear transactions table: {e}", exc_info=True)
+        # We might want to stop here if we can't clear the table
+        return
+    # --- END NEW ---
+
     logging.info("Fetching player info...")
     try:
         transactions = yq.get_league_transactions()
         transaction_data_to_insert = []
+
+        # --- NEW: Keep track of unique transactions to avoid API-side duplication ---
+        # (timestamp, player_id, move_type) should be unique
+        processed_transactions = set()
+        # --- END NEW ---
+
         for transaction in transactions:
             if transaction.status == 'successful':
                 timestamp_epoch = transaction.timestamp
                 transaction_date = datetime.fromtimestamp(timestamp_epoch).strftime('%Y-%m-%d')
+
                 for player_obj in transaction.players:
                     player_id = player_obj.player_id
                     player_name = player_obj.name.full
                     move_type = player_obj.transaction_data.type
+
                     if move_type == 'add':
                         fantasy_team = player_obj.transaction_data.destination_team_name
                     else:
                         fantasy_team = player_obj.transaction_data.source_team_name
-                    transaction_data_to_insert.append((transaction_date, player_id, player_name, fantasy_team, move_type))
 
-        sql = "INSERT OR IGNORE INTO transactions (transaction_date, player_id, player_name, fantasy_team, move_type) VALUES (?, ?, ?, ?, ?)"
+                    # --- NEW: Check for uniqueness before adding to insert list ---
+                    unique_key = (timestamp_epoch, player_id, move_type)
+                    if unique_key not in processed_transactions:
+                        transaction_data_to_insert.append((transaction_date, player_id, player_name, fantasy_team, move_type))
+                        processed_transactions.add(unique_key)
+                    # --- END NEW ---
+
+        # --- MODIFIED: Use standard INSERT since the table is empty ---
+        # (Though INSERT OR IGNORE would also work here, it's not necessary)
+        sql = "INSERT INTO transactions (transaction_date, player_id, player_name, fantasy_team, move_type) VALUES (?, ?, ?, ?, ?)"
         cursor.executemany(sql, transaction_data_to_insert)
-        logging.info(f"Successfully inserted or ignored data for {len(transaction_data_to_insert)} transactions.")
+        logging.info(f"Successfully inserted data for {len(transaction_data_to_insert)} transactions.")
 
     except Exception as e:
         logging.error(f"Failed to update transaction info: {e}", exc_info=True)

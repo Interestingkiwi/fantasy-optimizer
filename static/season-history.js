@@ -250,7 +250,7 @@
                             <td class="table-cell !text-left ${your_class.includes('font-bold') ? 'font-semibold' : ''}">${category}</td>
                             <td class="table-cell text-center ${your_class}">${your_val}</td>
                             <td class="table-cell text-center ${opp_class}">${opp_val}</td>
-                         </tr>`;
+                           </tr>`;
 
                 // --- START NEW LOGIC ---
                 // 5. Check for and render sub-categories
@@ -360,7 +360,7 @@
                             <td class="table-cell !text-left ${your_class.includes('font-bold') ? 'font-semibold' : ''}">${category}</td>
                             <td class="table-cell text-center ${your_class}">${your_val}</td>
                             <td class="table-cell text-center ${opp_class}">${opp_val}</td>
-                         </tr>`;
+                           </tr>`;
 
                 // --- Render sub-categories (no highlighting) ---
                 if (goalieCats.hasOwnProperty(category)) {
@@ -384,87 +384,87 @@
 
 
         function createSwapsStatTable(swaps_log, skater_headers, goalie_headers) {
-                const all_headers = [...skater_headers, ...goalie_headers];
+            const all_headers = [...skater_headers, ...goalie_headers];
 
-                // Filter headers to only those that actually changed
-                const headers_with_changes = all_headers.filter(header =>
-                    swaps_log.some(swap => swap.stat_diffs[header])
-                );
+            // Filter headers to only those that actually changed
+            const headers_with_changes = all_headers.filter(header =>
+                swaps_log.some(swap => swap.stat_diffs[header])
+            );
 
-                let html = `<div class"bg-gray-800 rounded-lg shadow-lg p-4">
-                                <h3 class="text-lg font-semibold text-white mb-3">Ideal Roster</h3>`;
+            let html = `<div class"bg-gray-800 rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-white mb-3">Ideal Roster</h3>`;
 
-                if (swaps_log.length === 0) {
-                    html += '<p class="text-gray-400">No beneficial swaps were found.</p></div>';
-                    return html;
-                }
+            if (swaps_log.length === 0) {
+                html += '<p class="text-gray-400">No beneficial swaps were found.</p></div>';
+                return html;
+            }
 
-                html += `<div class="overflow-x-auto">
-                            <table class="min-w-full divide-y divide-gray-700">
-                                <thead>
-                                    <tr>
-                                        <th class="table-header">Date</th>
-                                        <th class="table-header">Bench Player</th>
-                                        <th class="table-header">Replaced Player</th>
-                                        `;
+            html += `<div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-700">
+                            <thead>
+                                <tr>
+                                    <th class="table-header">Date</th>
+                                    <th class="table-header">Bench Player</th>
+                                    <th class="table-header">Replaced Player</th>
+                                    `;
 
-                // Create headers
-                for (const header of headers_with_changes) {
-                    html += `<th class="table-header">${header}</th>`;
-                }
+            // Create headers
+            for (const header of headers_with_changes) {
+                html += `<th class="table-header">${header}</th>`;
+            }
 
-                html += `       </tr>
-                                </thead>
-                                <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+            html += `       </tr>
+                            </thead>
+                            <tbody class="bg-gray-900 divide-y divide-gray-700">`;
 
-                const totals = {};
+            const totals = {};
 
-                // Create data rows
-                for (const swap of swaps_log) {
-                    html += `<tr>
-                                <td class="table-cell text-center">${swap.date}</td>
-                                <td class="table-cell text-center text-green-400">${swap.bench_player}</td>
-                                <td class="table-cell text-center text-red-400">${swap.replaced_player}</td>
-                             `;
-
-                    for (const header of headers_with_changes) {
-                        const diff = swap.stat_diffs[header] || 0;
-
-                        // Add to totals
-                        totals[header] = (totals[header] || 0) + diff;
-
-                        // Format the diff
-                        let diff_text = diff === 0 ? '0' : (diff > 0 ? `+${diff}` : `${diff}`);
-                        let diff_class = diff > 0 ? 'text-green-400' : (diff < 0 ? 'text-red-400' : 'text-gray-500');
-
-                        html += `<td class="table-cell text-center ${diff_class}">${diff_text}</td>`;
-                    }
-                    html += `</tr>`;
-                }
-
-                // --- Create Total Row ---
-                html += `<tr class="border-t-2 border-gray-500">
-                            <td class="table-cell text-center font-bold">Total</td>
-                            <td class="table-cell"></td>
-                            <td class="table-cell"></td>
-                         `;
+            // Create data rows
+            for (const swap of swaps_log) {
+                html += `<tr>
+                            <td class="table-cell text-center">${swap.date}</td>
+                            <td class="table-cell text-center text-green-400">${swap.bench_player}</td>
+                            <td class="table-cell text-center text-red-400">${swap.replaced_player}</td>
+                           `;
 
                 for (const header of headers_with_changes) {
-                    const total_diff = totals[header] || 0;
+                    const diff = swap.stat_diffs[header] || 0;
 
-                    let diff_text = total_diff === 0 ? '0' : (total_diff > 0 ? `+${total_diff}` : `${total_diff}`);
-                    let diff_class = total_diff > 0 ? 'text-green-400' : (total_diff < 0 ? 'text-red-400' : 'text-gray-500');
+                    // Add to totals
+                    totals[header] = (totals[header] || 0) + diff;
 
-                    html += `<td class="table-cell text-center ${diff_class} font-bold">${diff_text}</td>`;
+                    // Format the diff
+                    let diff_text = diff === 0 ? '0' : (diff > 0 ? `+${diff}` : `${diff}`);
+                    let diff_class = diff > 0 ? 'text-green-400' : (diff < 0 ? 'text-red-400' : 'text-gray-500');
+
+                    html += `<td class="table-cell text-center ${diff_class}">${diff_text}</td>`;
                 }
+                html += `</tr>`;
+            }
 
-                html += `       </tr>
+            // --- Create Total Row ---
+            html += `<tr class="border-t-2 border-gray-500">
+                        <td class="table-cell text-center font-bold">Total</td>
+                        <td class="table-cell"></td>
+                        <td class="table-cell"></td>
+                       `;
+
+            for (const header of headers_with_changes) {
+                const total_diff = totals[header] || 0;
+
+                let diff_text = total_diff === 0 ? '0' : (total_diff > 0 ? `+${total_diff}` : `${total_diff}`);
+                let diff_class = total_diff > 0 ? 'text-green-400' : (total_diff < 0 ? 'text-red-400' : 'text-gray-500');
+
+                html += `<td class="table-cell text-center ${diff_class} font-bold">${diff_text}</td>`;
+            }
+
+            html += `       </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>`;
-                return html;
-            }
+            return html;
+        }
 
 
     // --- Function to fetch and render bench points ---
@@ -506,9 +506,9 @@
             } else {
                 // Otherwise, show the "All Season" message
                 matchupHtml = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
-                                <h3 class="text-lg font-semibold text-white mb-3">Matchup Result</h3>
-                                <p class="text-gray-400">Matchup outcome unavailable when "All Season" is selected.</p>
-                               </div>`;
+                                    <h3 class="text-lg font-semibold text-white mb-3">Matchup Result</h3>
+                                    <p class="text-gray-400">Matchup outcome unavailable when "All Season" is selected.</p>
+                                   </div>`;
             }
 
             // --- New Layout Structure ---
@@ -570,7 +570,7 @@
             html += `<tr>
                         <td class="table-cell !text-left">${row['transaction_date']}</td>
                         <td class="table-cell !text-left">${row['player_name']}</td>
-                     </tr>`;
+                       </tr>`;
         }
 
         html += `       </tbody>
@@ -582,16 +582,30 @@
 
 
     // --- Helper function to create the added player stats table ---
-    // --- MODIFIED: Added defaults for headers and rows to prevent undefined errors ---
+    // --- MODIFIED: To handle Goalie calculated stats (SVpct, GAA) ---
     function createAddedPlayerStatsTable(title, headers = [], rows = []) {
         let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
                         <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
 
         if (rows.length === 0) {
-            // --- MODIFIED: More specific message ---
             html += `<p class="text-gray-400">No ${title.toLowerCase()} found or no stats recorded.</p></div>`;
             return html;
         }
+
+        // --- NEW: Goalie sub-category logic ---
+        const goalieCats = {
+            'SVpct': ['SV', 'SA'],
+            'GAA': ['GA', 'TOI/G']
+        };
+        const headersSet = new Set(headers);
+        const catsToSkip = new Set();
+        if (headersSet.has('SVpct')) {
+            goalieCats['SVpct'].forEach(cat => catsToSkip.add(cat));
+        }
+        if (headersSet.has('GAA')) {
+            goalieCats['GAA'].forEach(cat => catsToSkip.add(cat));
+        }
+        // --- END NEW ---
 
         html += `<div class="overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-700">
@@ -601,14 +615,12 @@
                                 <th class="table-header">GP</th>
                                 `;
 
-        // --- MODIFIED: Use all headers, don't filter ---
-        // Use all headers provided by the server
-        const headersToDisplay = headers.filter(h => h !== 'GP'); // Still exclude GP, as it's manually added
+        // Use all headers provided by the server, but filter out skipped sub-cats
+        const headersToDisplay = headers.filter(h => h !== 'GP' && !catsToSkip.has(h));
 
         for (const header of headersToDisplay) {
             html += `<th class="table-header">${header}</th>`;
         }
-        // --- END MODIFICATION ---
 
         html += `           </tr>
                         </thead>
@@ -619,11 +631,32 @@
                         <td class="table-cell !text-left">${row['Player']}</td>
                         <td class="table-cell text-center">${row['GP'] || 0}</td>
                         `;
-            // --- MODIFIED: Loop over all headers ---
+
             for (const header of headersToDisplay) {
-                html += `<td class="table-cell text-center">${row[header] || 0}</td>`;
+                let value = row[header] || 0;
+                let displayHtml = '';
+
+                // --- NEW: Formatting for calculated stats ---
+                if (header === 'SVpct') {
+                    const sv = row['SV'] || 0;
+                    const sa = row['SA'] || 0;
+                    displayHtml = `${value.toFixed(3)}
+                                 <br><span class="text-xs text-gray-400">(${sv}/${sa})</span>`;
+                } else if (header === 'GAA') {
+                    const ga = row['GA'] || 0;
+                    const toi = row['TOI/G'] || 0;
+                    // Format TOI to 2 decimals if it's not an integer, otherwise just show it
+                    const toiDisplay = Number.isInteger(toi) ? toi : toi.toFixed(2);
+                    displayHtml = `${value.toFixed(2)}
+                                 <br><span class="text-xs text-gray-400">(${ga} GA / ${toiDisplay} TOI)</span>`;
+                } else {
+                    // Format other numbers to 2 decimals if they are floats
+                    displayHtml = Number.isInteger(value) ? value : value.toFixed(2);
+                }
+                // --- END NEW ---
+
+                html += `<td class="table-cell text-center align-middle">${displayHtml}</td>`;
             }
-            // --- END MODIFICATION ---
             html += `</tr>`;
         }
 

@@ -1607,8 +1607,29 @@ def get_transaction_history_data():
 
                     # --- MODIFIED: Populate based on position and fill 0s ---
                     if is_goalie:
+                        # --- NEW: Calculate SVpct and GAA ---
+                        sv = player_stat_map.get('SV', 0)
+                        sa = player_stat_map.get('SA', 0)
+                        ga = player_stat_map.get('GA', 0)
+                        toi = player_stat_map.get('TOI/G', 0) # Assumes 'TOI/G' is the time-on-ice stat
+
+                        if 'SVpct' in goalie_categories:
+                            player_stat_map['SVpct'] = (sv / sa) if sa > 0 else 0.0
+
+                        if 'GAA' in goalie_categories:
+                            player_stat_map['GAA'] = ((float(ga) * 60) / toi) if toi > 0 else 0.0
+                        # --- END NEW ---
+
                         for cat in goalie_categories:
                             player_stats[cat] = player_stat_map.get(cat, 0)
+
+                        # --- NEW: Add sub-stats for JS to use ---
+                        player_stats['SV'] = sv
+                        player_stats['SA'] = sa
+                        player_stats['GA'] = ga
+                        player_stats['TOI/G'] = toi
+                        # --- END NEW ---
+
                         added_goalie_stats.append(player_stats)
                     else:
                         for cat in skater_categories:
@@ -1721,8 +1742,29 @@ def get_transaction_history_data():
 
                 # --- MODIFIED: Populate based on position and fill 0s ---
                 if is_goalie:
+                    # --- NEW: Calculate SVpct and GAA ---
+                    sv = player_stat_map.get('SV', 0)
+                    sa = player_stat_map.get('SA', 0)
+                    ga = player_stat_map.get('GA', 0)
+                    toi = player_stat_map.get('TOI/G', 0) # Assumes 'TOI/G' is the time-on-ice stat
+
+                    if 'SVpct' in goalie_categories:
+                        player_stat_map['SVpct'] = (sv / sa) if sa > 0 else 0.0
+
+                    if 'GAA' in goalie_categories:
+                        player_stat_map['GAA'] = ((float(ga) * 60) / toi) if toi > 0 else 0.0
+                    # --- END NEW ---
+
                     for cat in goalie_categories:
                         player_stats[cat] = player_stat_map.get(cat, 0)
+
+                    # --- NEW: Add sub-stats for JS to use ---
+                    player_stats['SV'] = sv
+                    player_stats['SA'] = sa
+                    player_stats['GA'] = ga
+                    player_stats['TOI/G'] = toi
+                    # --- END NEW ---
+
                     league_data[team_name]['goalies'].append(player_stats)
                 else:
                     for cat in skater_categories:
