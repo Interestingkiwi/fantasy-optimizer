@@ -48,58 +48,84 @@
         }
     };
 
-    const handleDbAction = async () => {
+    let eventSource = null;
+
+    const handleDbAction = async (event) => {
+        event.preventDefault();
         actionButton.disabled = true;
         actionButton.classList.add('opacity-50', 'cursor-not-allowed');
-        actionButton.textContent = 'Processing...';
+        actionButton.textContent = 'Starting Update...';
+        logContainer.innerHTML = ''; // Clear previous logs
 
-        // Clear previous logs and show a starting message
-        logContainer.innerHTML = '<p class="text-yellow-400">Connecting to update stream...</p>';
+        // Close any existing stream
+        if (eventSource) {
+            eventSource.close();
+        }
 
-        const captureLineups = captureLineupsCheckbox.checked;
-        /*const skipStaticInfo = skipStaticInfoCheckbox.checked;
-        const skipAvailablePlayers = skipAvailablePlayersCheckbox.checked;*/
-
-        // --- Start the Update and Listen for Logs ---
         try {
-            // 1. Start the update process on the server
-            const response = await fetch('/api/update_db', {
+            const options = {
+                'capture_lineups': captureLineupsCheckbox.checked,
+                // These are commented out in your HTML, but get them if they exist
+                // 'skip_static': document.getElementById('skip-static-info')?.checked || false,
+                // 'skip_players': document.getElementById('skip-available-players')?.checked || false,
+
+                // --- Temp fix since the checkboxes are commented out ---
+                'skip_static': false,
+                'skip_players': false
+            };
+
+            // 1. Call the action endpoint
+            const response = await fetch('/api/db_action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    capture_lineups: captureLineups/*,
-                    skip_static_info: skipStaticInfo,
-                    skip_available_players: skipAvailablePlayers*/
-                })
+                body: JSON.stringify(options)
             });
 
-            const data = await response.json();
-            if (!response.ok || !data.success) {
-                throw new Error(data.error || 'Failed to start update process.');
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || `Server error: ${response.status}`);
             }
 
-            // 2. Connect to the event stream to get live logs
-            logContainer.innerHTML = '<p class="text-gray-400">Update process started. Waiting for logs...</p>';
-            const eventSource = new EventSource('/stream');
+            const data = await response.json();
+            if (!data.success || !data.build_id) {
+                 throw new Error('Failed to start build process. Server did not return a build_id.');
+            }
+
+            actionButton.textContent = 'Update in Progress...';
+
+            // 2. Connect to the log stream USING the build_id
+            eventSource = new EventSource(`/api/db_log_stream?build_id=${data.build_id}`);
 
             eventSource.onmessage = function(event) {
-                // Clear the initial message on first real log
-                if (logContainer.querySelector('p.text-gray-400')) {
-                    logContainer.innerHTML = '';
+                // 3. Check for the sentinel message
+                if (event.data === '__DONE__') {
+                    eventSource.close();
+                    eventSource = null;
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                    // Re-enable button and refresh status
+                    actionButton.disabled = false;
+                    actionButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                    actionButton.textContent = 'Update Complete';
+                    fetchStatus(); // Refresh main status
+                    return;
                 }
 
                 const p = document.createElement('p');
                 p.textContent = event.data;
-                // Add color coding for different log levels
-                if (event.data.startsWith('SUCCESS:')) {
-                    p.className = 'text-green-400';
+
+                if (event.data.startsWith('--- SUCCESS:')) {
+                    p.className = 'text-green-400 font-bold';
+                } else if (event.data.startsWith('--- ERROR:') || event.data.startsWith('--- FATAL ERROR:')) {
+                    p.className = 'text-red-400 font-bold';
                 } else if (event.data.startsWith('ERROR:')) {
                     p.className = 'text-red-400';
+                } else if (event.data.startsWith('---')) {
+                     p.className = 'text-yellow-400';
                 } else {
                     p.className = 'text-gray-300';
                 }
                 logContainer.appendChild(p);
-                logContainer.scrollTop = logContainer.scrollHeight; // Auto-scroll to the bottom
+                logContainer.scrollTop = logContainer.scrollHeight; // Auto-scroll
             };
 
             eventSource.onerror = function(err) {
@@ -108,9 +134,14 @@
                 p.className = 'text-red-500';
                 p.textContent = 'Connection to log stream lost. Refreshing status...';
                 logContainer.appendChild(p);
-                eventSource.close();
+                if (eventSource) eventSource.close();
+                eventSource = null;
                 // Refresh the main status when the stream closes
                 fetchStatus();
+                // Re-enable button
+                actionButton.disabled = false;
+                actionButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                actionButton.textContent = 'Stream Error';
             };
 
         } catch (error) {

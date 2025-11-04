@@ -15,11 +15,11 @@
     const historyContent = document.getElementById('history-content');
     const loadingSpinner = document.getElementById('loading-spinner');
 
-    // --- NEW: Add toggle button and team select wrapper ---
     const viewToggleButton = document.getElementById('view-toggle-button');
-    const teamSelectWrapper = document.getElementById('team-select-wrapper');
+    // --- MODIFIED: Remove teamSelectWrapper ---
+    // const teamSelectWrapper = document.getElementById('team-select-wrapper');
     let currentViewMode = 'team'; // 'team' or 'league'
-    // --- END NEW ---
+    // --- END MODIFIED ---
 
     let pageData = null;
 
@@ -77,11 +77,11 @@
     function setupEventListeners() {
         weekSelect.addEventListener('change', fetchAndRenderTable);
         yourTeamSelect.addEventListener('change', fetchAndRenderTable);
-        reportSelect.addEventListener('change', handleReportChange); // --- MODIFIED ---
-        viewToggleButton.addEventListener('click', toggleViewMode); // --- NEW ---
+        reportSelect.addEventListener('change', handleReportChange);
+        viewToggleButton.addEventListener('click', toggleViewMode);
     }
 
-    // --- NEW: Show/hide controls based on report ---
+    // --- MODIFIED: Removed teamSelectWrapper logic ---
     function handleReportChange() {
         const selectedReport = reportSelect.value;
         if (selectedReport === 'transaction_history') {
@@ -90,26 +90,27 @@
             updateControlsForViewMode();
         } else {
             viewToggleButton.classList.add('hidden');
-            // Always show team select for other reports
-            teamSelectWrapper.classList.remove('hidden');
+            // --- REMOVED ---
+            // teamSelectWrapper.classList.remove('hidden');
         }
         fetchAndRenderTable();
     }
+    // --- END MODIFIED ---
 
-    // --- NEW: Toggle view mode logic ---
     function toggleViewMode() {
         currentViewMode = (currentViewMode === 'team') ? 'league' : 'team';
         updateControlsForViewMode();
         fetchAndRenderTable();
     }
 
-    // --- NEW: Update UI based on view mode ---
+    // --- MODIFIED: Removed teamSelectWrapper logic ---
     function updateControlsForViewMode() {
         if (currentViewMode === 'league') {
             viewToggleButton.textContent = 'Switch to Team View';
             viewToggleButton.classList.replace('bg-blue-600', 'bg-indigo-600');
             viewToggleButton.classList.replace('hover:bg-blue-700', 'hover:bg-indigo-700');
-            teamSelectWrapper.classList.add('hidden'); // Hide team select in league view
+            // --- REMOVED ---
+            // teamSelectWrapper.classList.add('hidden');
 
             // --- NEW: Disable "All Season" in league view ---
             if (weekSelect.value === 'all') {
@@ -121,10 +122,12 @@
             viewToggleButton.textContent = 'Switch to League View';
             viewToggleButton.classList.replace('bg-indigo-600', 'bg-blue-600');
             viewToggleButton.classList.replace('hover:bg-indigo-700', 'hover:bg-blue-700');
-            teamSelectWrapper.classList.remove('hidden'); // Show team select
+            // --- REMOVED ---
+            // teamSelectWrapper.classList.remove('hidden');
             weekSelect.querySelector('option[value="all"]').disabled = false; // Re-enable "All Season"
         }
     }
+    // --- END MODIFIED ---
 
 
     // --- Helper function to create a table ---

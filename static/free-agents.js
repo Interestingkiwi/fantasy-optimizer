@@ -129,7 +129,14 @@
         const selectedTeam = yourTeamSelect ? yourTeamSelect.value : null;
 
         try {
-            const payload = { team_name: selectedTeam };
+            // --- [START] FIX #1 ---
+            // Add the global simulatedMoves array to the payload
+            const payload = {
+                team_name: selectedTeam,
+                simulated_moves: simulatedMoves
+            };
+            // --- [END] FIX #1 ---
+
             if (selectedCategories) {
                 payload.categories = selectedCategories;
             }
@@ -237,52 +244,51 @@
         }
 
     function filterAndSortPlayers() {
-            const searchTerm = playerSearchInput.value.toLowerCase();
-           
-            // Read selected positions from the checkboxes
-            selectedPositions = Array.from(document.querySelectorAll('#position-filters-container input:checked')).map(cb => cb.value);
-           
-            // Read selected days from the checkboxes
-            selectedDays = Array.from(document.querySelectorAll('#day-filters-container input:checked')).map(cb => cb.value);
+            const searchTerm = playerSearchInput.value.toLowerCase();
 
-            const positionFilter = (player) => {
-                // If no positions are selected, show all players
-                if (selectedPositions.length === 0) {
-                    return true;
-                }
-                // If positions are selected, check if the player's position string contains ANY of them (OR logic)
-                const playerPositions = player.positions || '';
-                return selectedPositions.some(pos => playerPositions.includes(pos));
-            };
+            // Read selected positions from the checkboxes
+            selectedPositions = Array.from(document.querySelectorAll('#position-filters-container input:checked')).map(cb => cb.value);
 
-            // Day filter with AND logic
-            const dayFilter = (player) => {
-                // If no days are selected, show all players
-                if (selectedDays.length === 0) {
-                    return true;
-                }
-                // Check if the player has games on ALL selected days (AND logic)
-                const playerGames = player.games_this_week || [];
-                return selectedDays.every(day => playerGames.includes(day));
-            };
+            // Read selected days from the checkboxes
+            selectedDays = Array.from(document.querySelectorAll('#day-filters-container input:checked')).map(cb => cb.value);
 
-            const searchFilter = (player) => {
-                return player.player_name.toLowerCase().includes(searchTerm);
-            };
+            const positionFilter = (player) => {
+                // If no positions are selected, show all players
+                if (selectedPositions.length === 0) {
+                    return true;
+                }
+                // If positions are selected, check if the player's position string contains ANY of them (OR logic)
+                const playerPositions = player.positions || '';
+                return selectedPositions.some(pos => playerPositions.includes(pos));
+            };
 
-            // Apply all three filters
-            let filteredWaivers = allWaiverPlayers.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p));
-            sortPlayers(filteredWaivers, sortConfig.waivers);
-            renderPlayerTable('Waiver Players', filteredWaivers, waiverContainer, 'waivers');
+            // Day filter with AND logic
+            const dayFilter = (player) => {
+                // If no days are selected, show all players
+                if (selectedDays.length === 0) {
+                    return true;
+                }
+                // Check if the player has games on ALL selected days (AND logic)
+                const playerGames = player.games_this_week || [];
+                return selectedDays.every(day => playerGames.includes(day));
+            };
 
-            let filteredFreeAgents = allFreeAgents.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p));
-            sortPlayers(filteredFreeAgents, sortConfig.freeAgents);
-            renderPlayerTable('Free Agents', filteredFreeAgents, freeAgentContainer, 'freeAgents', true);
-        }
+            const searchFilter = (player) => {
+                return player.player_name.toLowerCase().includes(searchTerm);
+            };
+
+            // Apply all three filters
+            let filteredWaivers = allWaiverPlayers.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p));
+            sortPlayers(filteredWaivers, sortConfig.waivers);
+            renderPlayerTable('Waiver Players', filteredWaivers, waiverContainer, 'waivers');
+
+            let filteredFreeAgents = allFreeAgents.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p));
+            sortPlayers(filteredFreeAgents, sortConfig.freeAgents);
+            renderPlayerTable('Free Agents', filteredFreeAgents, freeAgentContainer, 'freeAgents', true);
+        }
 
     function sortPlayers(players, config) {
         // Helper to get the value, treating null/undefined/0/- as the highest (Infinity)
-        // This ensures they go to the bottom when sorting ascending (low-to-high)
         const getSortableValue = (value) => {
             if (value === null || value === undefined || value === 0 || value === '-') {
                 return Infinity;
@@ -294,16 +300,13 @@
             let valA, valB;
 
             if (config.key === 'player_name') {
-                // Special case for player name (string sort)
                 valA = String(a.player_name).toLowerCase();
                 valB = String(b.player_name).toLowerCase();
             } else {
-                // Numeric/Rank sort
                 valA = getSortableValue(a[config.key]);
                 valB = getSortableValue(b[config.key]);
             }
 
-            // handleSortClick now *always* sets direction to 'ascending'
             if (valA < valB) return config.direction === 'ascending' ? -1 : 1;
             if (valA > valB) return config.direction === 'ascending' ? 1 : -1;
             return 0;
@@ -357,7 +360,6 @@
                 const gamesThisWeek = player.games_this_week || [];
 
                 if (!currentUnusedSpots || playerPositions.length === 0) {
-                    // No spots data or player has no positions, just join
                     gamesThisWeekHtml = gamesThisWeek.join(', ');
                 } else {
                     gamesThisWeekHtml = gamesThisWeek.map(day => {
@@ -370,7 +372,6 @@
                             const trimmedPos = pos.trim();
                             if (dailySpots.hasOwnProperty(trimmedPos)) {
                                 const spotValue = String(dailySpots[trimmedPos]);
-                                // Highlight if spotValue is not '0' (e.g., '1', '2', or '0*')
                                 if (spotValue !== '0') {
                                     return `<strong class="text-yellow-300">${day}</strong>`;
                                 }
@@ -419,8 +420,6 @@
         const key = e.target.dataset.sortKey;
         const tableType = e.target.dataset.tableType;
 
-        // Always set the sort to ascending (low-to-high).
-        // This removes the toggle to descending.
         sortConfig[tableType].key = key;
         sortConfig[tableType].direction = 'ascending';
 
@@ -445,7 +444,6 @@
             currentTeamRoster.forEach(player => {
                 // Only add if they haven't been dropped
                 if (!droppedPlayerIds.has(player.player_id)) {
-                    // MODIFIED: Removed player_team
                     optionsHtml += `<option value="${player.player_id}" data-type="roster">${player.player_name} - ${player.eligible_positions}</option>`;
                 }
             });
@@ -453,10 +451,12 @@
             // Add players from the simulation
             simulatedMoves.forEach(move => {
                 const player = move.added_player;
-                // MODIFIED: Removed player_team
-                optionsHtml += `<option value="${player.player_id}" data-type="simulated" data-add-date="${move.date}">
-                    ${player.player_name} - ${player.positions} (Added ${move.date})
-                </option>`;
+                // --- NEW: Only add if they haven't been subsequently dropped ---
+                if (!droppedPlayerIds.has(player.player_id)) {
+                    optionsHtml += `<option value="${player.player_id}" data-type="simulated" data-add-date="${move.date}">
+                        ${player.player_name} - ${player.positions} (Added ${move.date})
+                    </option>`;
+                }
             });
 
             playerDropDropdown.innerHTML = optionsHtml;
@@ -476,7 +476,6 @@
             return;
         }
 
-        // Sort moves by date to display them in chronological order
         const sortedMoves = [...simulatedMoves].sort((a, b) => {
             if (a.date < b.date) return -1;
             if (a.date > b.date) return 1;
@@ -533,7 +532,6 @@
                 return;
             }
 
-            // --- Validation for simulated player drop ---
             if (droppedPlayerOption.dataset.type === 'simulated') {
                 const addDate = droppedPlayerOption.dataset.addDate;
                 if (transactionDate < addDate) {
@@ -542,10 +540,7 @@
                 }
             }
 
-            // --- MODIFIED SECTION: Find player objects with validation ---
-
             // Find Added Player
-            // MODIFIED: Removed parseInt and using loose equality (==) for comparison
             const addedPlayerId = checkedBox.value;
             const tableType = checkedBox.dataset.table;
             const addedPlayer = (tableType === 'waivers' ? allWaiverPlayers : allFreeAgents).find(p => p.player_id == addedPlayerId);
@@ -557,13 +552,11 @@
             }
 
             // Find Dropped Player
-            // MODIFIED: Removed parseInt and using loose equality (==) for comparison
             const droppedPlayerId = droppedPlayerOption.value;
             let droppedPlayer;
             if (droppedPlayerOption.dataset.type === 'roster') {
                 droppedPlayer = currentTeamRoster.find(p => p.player_id == droppedPlayerId);
             } else {
-                // Find in simulated moves
                 const sourceMove = simulatedMoves.find(m => m.added_player.player_id == droppedPlayerId);
                 if (sourceMove) {
                     droppedPlayer = sourceMove.added_player;
@@ -575,27 +568,24 @@
                 alert("An error occurred trying to find the player to drop. Please refresh and try again.");
                 return;
             }
-            // --- END MODIFIED SECTION ---
 
-
-            // Add to simulation
             simulatedMoves.push({
                 date: transactionDate,
                 added_player: addedPlayer,
                 dropped_player: droppedPlayer
             });
 
-            // Save to localStorage
             localStorage.setItem(SIMULATION_KEY, JSON.stringify(simulatedMoves));
 
-            // Update UI
-            populateDropPlayerDropdown();
-            renderSimulatedMovesLog(); // This will now render the table we made
-            checkedBox.checked = false;
-            checkedBox.disabled = true; // Disable to prevent re-adding
+            // --- [START] FIX #2 ---
+            // Re-fetch all data from the server to get new unused spots
+            const selectedCategories = Array.from(document.querySelectorAll('#category-checkboxes-container input:checked')).map(cb => cb.value);
+            fetchData(selectedCategories);
+            // --- [END] FIX #2 ---
 
-            // Alert user
-          /*  alert('Simulation added! Navigate to Lineups or Matchups to see the effect.'); */
+            // UI updates will be handled by fetchData, but we can still reset the form
+            checkedBox.checked = false;
+            // The dropdowns and log will be rebuilt by fetchData()
         }
 
     function handleResetClick() {
@@ -647,10 +637,6 @@
         unusedRosterSpotsContainer.innerHTML = tableHtml;
     }
 
-    /**
-     * MODIFIED FUNCTION
-     * Adds event delegation for the new Check All/Uncheck All buttons.
-     */
     function setupEventListeners() {
         playerSearchInput.addEventListener('input', () => {
             filterAndSortPlayers();
@@ -659,18 +645,18 @@
         recalculateButton.addEventListener('click', handleRecalculateClick);
 
         positionFiltersContainer.addEventListener('change', (e) => {
-                    if (e.target.name === 'position-filter') {
-                        filterAndSortPlayers(); // This now reads the checkboxes
-                        saveStateToCache(); // Save the new state
-                    }
-                });
+                    if (e.target.name === 'position-filter') {
+                        filterAndSortPlayers(); // This now reads the checkboxes
+                        saveStateToCache(); // Save the new state
+                    }
+                });
 
         dayFiltersContainer.addEventListener('change', (e) => {
-                    if (e.target.name === 'day-filter') {
-                        filterAndSortPlayers(); // This now reads the day checkboxes
-                        saveStateToCache(); // Save the new state
-                    }
-                });
+                    if (e.target.name === 'day-filter') {
+                        filterAndSortPlayers(); // This now reads the day checkboxes
+                        saveStateToCache(); // Save the new state
+                    }
+                });
 
         checkboxesContainer.addEventListener('click', (e) => {
             const setAllCheckboxes = (checkedState) => {
