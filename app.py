@@ -2605,7 +2605,21 @@ def db_action():
         finally:
             with db_build_status_lock:
                 db_build_status["running"] = False
-            build_queue.put(None) # Sentinel to end the stream
+
+            try:
+                # Send the 'None' sentinel to tell any listener to stop
+                build_queue.put(None, timeout=5)
+            except Exception as e:
+                logger.error(f"Build task {build_id} couldn't put sentinel in queue: {e}")
+
+            # Give the listener a brief moment to receive the sentinel and disconnect
+            time.sleep(1)
+
+            # Now, this thread cleans up its own queue from the global dict
+            with DB_QUEUES_LOCK:
+                if build_id in DB_BUILD_QUEUES:
+                    del DB_BUILD_QUEUES[build_id]
+                    logger.info(f"Build task {build_id} cleaned up its own queue.")
 
     # --- Start thread with new thread_data arg ---
     threading.Thread(target=run_task, args=(build_id, build_queue, options, thread_data)).start()
@@ -2627,22 +2641,22 @@ def db_log_stream():
         return Response(f"data: ERROR: Invalid build ID {build_id}. It may be complete or never existed.\n\ndata: __DONE__\n\n", mimetype='text/event-stream')
 
     def generate():
-        try:
-            while True:
-                try:
-                    message = build_queue.get(timeout=20)
-                    if message is None: # The sentinel
-                        yield 'data: __DONE__\n\n'
-                        break
-                    message = message.strip()
-                    yield f"data: {message}\n\n"
-                except: # queue.Empty exception
-                    yield ': keep-alive\n\n'
-        finally:
-            with DB_QUEUES_LOCK:
-                if build_id in DB_BUILD_QUEUES:
-                    del DB_BUILD_QUEUES[build_id]
-            logging.info(f"Closed log stream and cleaned up queue for build {build_id}")
+        # The try...finally block is removed.
+        while True:
+            try:
+                message = build_queue.get(timeout=20)
+                if message is None: # The sentinel from run_task
+                    yield 'data: __DONE__\n\n'
+                    break # Exit the loop
+                message = message.strip()
+                yield f"data: {message}\n\n"
+            except: # queue.Empty exception
+                # This keep-alive is fine
+                yield ': keep-alive\n\n'
+
+        # When the loop breaks (or client disconnects), this generator just ends.
+        # It no longer deletes the queue.
+        logging.info(f"Log stream {build_id} disconnected.")
 
     return Response(generate(), mimetype='text/event-stream')
 
