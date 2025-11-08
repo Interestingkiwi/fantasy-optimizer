@@ -1773,6 +1773,81 @@ def get_transaction_history_data():
             conn.close()
 
 
+def _get_ranks_for_one_week(cursor, all_team_ids, selected_team_id, categories_to_process, categories_to_fetch, reverse_scoring_cats, week_num):
+    """
+    Helper function to calculate the ranks for a selected team for a single week.
+    Returns a dict: {category: rank}
+    """
+    ranks_map = {}
+
+    # 1. Get week dates
+    cursor.execute("SELECT start_date, end_date FROM weeks WHERE week_num = ?", (week_num,))
+    week_dates = cursor.fetchone()
+    if not week_dates:
+        return {} # No data for this week
+
+    start_date = week_dates['start_date']
+    end_date = week_dates['end_date']
+
+    # 2. Initialize stats dict for all teams
+    all_team_stats = {
+        team_id: {cat: 0 for cat in categories_to_fetch}
+        for team_id in all_team_ids
+    }
+
+    # 3. Run aggregation query for this specific week
+    sql_params = [start_date, end_date]
+    sql_query = """
+        SELECT team_id, category, SUM(stat_value) as total
+        FROM daily_player_stats
+        WHERE date_ >= ? AND date_ <= ?
+        GROUP BY team_id, category
+    """
+    cursor.execute(sql_query, tuple(sql_params))
+    raw_stats = decode_dict_values([dict(row) for row in cursor.fetchall()])
+
+    # 4. Pivot data
+    for row in raw_stats:
+        team_id = str(row['team_id'])
+        if team_id in all_team_stats and row['category'] in all_team_stats[team_id]:
+            all_team_stats[team_id][row['category']] = row.get('total', 0)
+
+    # 5. Recalculate goalie stats
+    for team_id in all_team_stats:
+        stats = all_team_stats[team_id]
+        sv = stats.get('SV', 0)
+        sa = stats.get('SA', 0)
+        ga = stats.get('GA', 0)
+        toi = stats.get('TOI/G', 0)
+        sho = stats.get('SHO', 0)
+        if sho > 0:
+            toi += (sho * 60)
+            stats['TOI/G'] = toi
+        if 'GAA' in stats:
+            stats['GAA'] = (ga * 60) / toi if toi > 0 else 0
+        if 'SVpct' in stats:
+            stats['SVpct'] = sv / sa if sa > 0 else 0
+
+    # 6. Calculate ranks for selected team
+    for cat in categories_to_process:
+        # --- [START] FIX ---
+        # Removed the faulty 'if cat not in ...' check.
+        # We will get the value (defaulting to 0) and rank it.
+        # --- [END] FIX ---
+
+        my_value = all_team_stats[selected_team_id].get(cat, 0)
+        is_reverse = cat in reverse_scoring_cats
+
+        all_values = [all_team_stats[team_id].get(cat, 0) for team_id in all_team_ids]
+        sorted_values = sorted(list(set(all_values)), reverse=(not is_reverse))
+
+        rank = sorted_values.index(my_value) + 1
+        ranks_map[cat] = rank
+
+    return ranks_map
+
+
+
 @app.route('/api/history/category_strengths', methods=['POST'])
 def get_category_strengths_data():
     league_id = session.get('league_id')
@@ -1785,6 +1860,7 @@ def get_category_strengths_data():
         data = request.get_json()
         selected_team_name = data.get('team_name')
         week = data.get('week')
+        week_num_int = None # Initialize
 
         logging.info("--- Category Strengths Report (League) ---")
         logging.info(f"Selected team: {selected_team_name}, week: '{week}'")
@@ -1795,6 +1871,7 @@ def get_category_strengths_data():
 
         teams_map_id_to_name = {str(row['team_id']): row['name'].decode('utf-8').strip() for row in all_teams_raw}
         teams_map_name_to_id = {v: k for k, v in teams_map_id_to_name.items()}
+        all_team_ids = list(teams_map_id_to_name.keys()) # List of string IDs
 
         if selected_team_name not in teams_map_name_to_id:
              return jsonify({'error': f'Team not found: {selected_team_name}'}), 404
@@ -1825,8 +1902,6 @@ def get_category_strengths_data():
                         matchup_row_decoded = decode_dict_values(dict(matchup_row))
                         opponent_name = matchup_row_decoded['team2'] if matchup_row_decoded['team1'] == selected_team_name else matchup_row_decoded['team1']
                         logging.info(f"Found opponent_name: {opponent_name}")
-                    else:
-                        logging.warning(f"Could not find matchup row for week = {week_num_int}")
                 else:
                     logging.warning(f"Could not find week_num = {week_num_int}")
             except (ValueError, TypeError):
@@ -1839,10 +1914,12 @@ def get_category_strengths_data():
         all_categories_raw = cursor.fetchall()
         skater_categories = [row['category'] for row in all_categories_raw if row['scoring_group'] == 'offense']
         goalie_categories = [row['category'] for row in all_categories_raw if row['scoring_group'] == 'goaltending']
-        all_scoring_categories = set(skater_categories + goalie_categories)
-        categories_to_fetch = all_scoring_categories | {'SV', 'SA', 'GA', 'TOI/G'}
 
-        # --- NEW: Define reverse scoring categories ---
+        # --- MODIFIED: Create a combined list in order ---
+        categories_to_process = skater_categories + goalie_categories
+
+        all_scoring_categories = set(categories_to_process)
+        categories_to_fetch = all_scoring_categories | {'SV', 'SA', 'GA', 'TOI/G'}
         reverse_scoring_cats = {'GA', 'GAA'}
 
         # 4. Build and execute the *league-wide* aggregation query
@@ -1862,12 +1939,11 @@ def get_category_strengths_data():
 
         cursor.execute(sql_query, tuple(sql_params))
         raw_stats = decode_dict_values([dict(row) for row in cursor.fetchall()])
-        logging.info(f"Found {len(raw_stats)} aggregated stat rows for the whole league.")
 
         # 5. Pivot data for *all* teams and recalculate derived stats
         all_team_stats = {
             team_id: {cat: 0 for cat in categories_to_fetch}
-            for team_id in teams_map_id_to_name
+            for team_id in all_team_ids
         }
 
         for row in raw_stats:
@@ -1882,106 +1958,162 @@ def get_category_strengths_data():
             ga = stats.get('GA', 0)
             toi = stats.get('TOI/G', 0)
             sho = stats.get('SHO', 0)
-
             if sho > 0:
                 toi += (sho * 60)
                 stats['TOI/G'] = toi
-
             if 'GAA' in stats:
                 stats['GAA'] = (ga * 60) / toi if toi > 0 else 0
             if 'SVpct' in stats:
                 stats['SVpct'] = sv / sa if sa > 0 else 0
 
-        # --- NEW: Get list of opponent IDs ---
-        opponent_team_ids = [team_id for team_id in all_team_stats if team_id != selected_team_id]
+        opponent_team_ids = [team_id for team_id in all_team_ids if team_id != selected_team_id]
         num_opponents = len(opponent_team_ids)
 
         # 6. Determine Column Order
-        team_headers = []
-        team_headers.append(selected_team_name)
-
+        team_headers = [selected_team_name]
         other_team_names = [name for name in teams_map_name_to_id if name != selected_team_name]
-
         if opponent_name:
             team_headers.append(opponent_name)
             if opponent_name in other_team_names:
                 other_team_names.remove(opponent_name)
-
         team_headers.extend(sorted(other_team_names))
-        logging.info(f"Team header order: {team_headers}")
 
-        # 7. Format data for vertical table output
+        # 7. Format data for main tables (and get current ranks)
         skater_data_rows = []
+        goalie_data_rows = []
+        current_period_ranks = {} # Store ranks for Step 8
+
         for cat in skater_categories:
             row = {'category': cat}
             my_value = all_team_stats[selected_team_id].get(cat, 0)
             is_reverse = cat in reverse_scoring_cats
-
-            # --- Calculate Rank ---
-            all_values = [all_team_stats[team_id].get(cat, 0) for team_id in all_team_stats]
-            # Use set() for a dense rank (e.g., 1, 2, 2, 3)
+            all_values = [all_team_stats[team_id].get(cat, 0) for team_id in all_team_ids]
             sorted_values = sorted(list(set(all_values)), reverse=(not is_reverse))
-            row['Rank'] = sorted_values.index(my_value) + 1
+            rank = sorted_values.index(my_value) + 1
+            row['Rank'] = rank
+            current_period_ranks[cat] = rank # Save rank
 
-            # --- Calculate Average Delta ---
             if num_opponents > 0:
                 opponent_values = [all_team_stats[team_id].get(cat, 0) for team_id in opponent_team_ids]
                 deltas = [my_value - opp_value for opp_value in opponent_values]
                 avg_delta = sum(deltas) / num_opponents
                 if is_reverse:
-                    avg_delta = -avg_delta # Flip sign so positive is always "good"
+                    avg_delta = -avg_delta
                 row['Average Delta'] = round(avg_delta, 2)
             else:
                 row['Average Delta'] = 0
 
-            # --- Add team stats ---
             for team_name in team_headers:
-                team_id = teams_map_name_to_id[team_name]
-                value = all_team_stats[team_id].get(cat, 0)
-                row[team_name] = round(value, 1)
+                row[team_name] = round(all_team_stats[teams_map_name_to_id[team_name]].get(cat, 0), 1)
             skater_data_rows.append(row)
 
-        goalie_data_rows = []
         for cat in goalie_categories:
             row = {'category': cat}
             my_value = all_team_stats[selected_team_id].get(cat, 0)
             is_reverse = cat in reverse_scoring_cats
-
-            # --- Calculate Rank ---
-            all_values = [all_team_stats[team_id].get(cat, 0) for team_id in all_team_stats]
+            all_values = [all_team_stats[team_id].get(cat, 0) for team_id in all_team_ids]
             sorted_values = sorted(list(set(all_values)), reverse=(not is_reverse))
-            row['Rank'] = sorted_values.index(my_value) + 1
+            rank = sorted_values.index(my_value) + 1
+            row['Rank'] = rank
+            current_period_ranks[cat] = rank # Save rank
 
-            # --- Calculate Average Delta ---
             if num_opponents > 0:
                 opponent_values = [all_team_stats[team_id].get(cat, 0) for team_id in opponent_team_ids]
                 deltas = [my_value - opp_value for opp_value in opponent_values]
                 avg_delta = sum(deltas) / num_opponents
                 if is_reverse:
-                    avg_delta = -avg_delta # Flip sign so positive is always "good"
+                    avg_delta = -avg_delta
                 row['Average Delta'] = round(avg_delta, 2)
             else:
                 row['Average Delta'] = 0
 
-            # --- Add team stats ---
             for team_name in team_headers:
-                team_id = teams_map_name_to_id[team_name]
-                value = all_team_stats[team_id].get(cat, 0)
-
-                if cat == 'GAA':
-                    value = round(value, 2)
-                elif cat == 'SVpct':
-                    value = round(value, 3)
-                else:
-                    value = round(value, 1)
+                value = all_team_stats[teams_map_name_to_id[team_name]].get(cat, 0)
+                if cat == 'GAA': value = round(value, 2)
+                elif cat == 'SVpct': value = round(value, 3)
+                else: value = round(value, 1)
                 row[team_name] = value
             goalie_data_rows.append(row)
+
+        # --- [START] NEW STEP 8: Calculate Rank Trends ---
+        trend_data = {}
+
+        # Get max week (current week - 1)
+        today = date.today().isoformat()
+        cursor.execute("SELECT week_num FROM weeks WHERE start_date <= ? AND end_date >= ?", (today, today))
+        current_week_row = cursor.fetchone()
+        # Use 1 as a fallback, but default to current week
+        current_week_num = current_week_row['week_num'] if current_week_row else 1
+
+        # Max week for trend is the *last completed week*
+        max_week = current_week_num - 1
+
+        if week == 'all':
+            logging.info(f"Calculating 'All Season' trend data up to week {max_week}")
+            trend_data['type'] = 'matrix'
+            matrix_data = {cat: {} for cat in categories_to_process}
+            prior_ranks = {cat: None for cat in categories_to_process}
+
+            weeks_to_process = list(range(1, max_week + 1))
+            if not weeks_to_process:
+                logging.warning("No completed weeks found for trend data.")
+
+            for w in weeks_to_process:
+                # This is our new helper function
+                weekly_ranks = _get_ranks_for_one_week(
+                    cursor, all_team_ids, selected_team_id,
+                    categories_to_process, categories_to_fetch,
+                    reverse_scoring_cats, w
+                )
+
+                for cat in categories_to_process:
+                    rank = weekly_ranks.get(cat)
+                    prior_rank = prior_ranks.get(cat)
+                    delta = None
+                    if rank is not None and prior_rank is not None:
+                        delta = prior_rank - rank # User's logic: +3 for 4 -> 1
+
+                    matrix_data[cat][w] = (rank, delta)
+                    prior_ranks[cat] = rank # Set for next loop
+
+            trend_data['data'] = matrix_data
+            trend_data['weeks'] = weeks_to_process
+
+        elif week_num_int is not None: # Individual week
+            logging.info(f"Calculating 'Individual Week' trend data for week {week_num_int}")
+            trend_data['type'] = 'list'
+            list_data = []
+            prior_week_num = week_num_int - 1
+            prior_ranks = {}
+
+            if prior_week_num > 0:
+                prior_ranks = _get_ranks_for_one_week(
+                    cursor, all_team_ids, selected_team_id,
+                    categories_to_process, categories_to_fetch,
+                    reverse_scoring_cats, prior_week_num
+                )
+
+            for cat in categories_to_process:
+                current_rank = current_period_ranks.get(cat)
+                prior_rank = prior_ranks.get(cat)
+                delta = None
+                if current_rank is not None and prior_rank is not None:
+                    delta = prior_rank - current_rank
+
+                list_data.append({
+                    'category': cat,
+                    'rank': current_rank,
+                    'delta': delta
+                })
+            trend_data['data'] = list_data
+        # --- [END] NEW STEP 8 ---
 
         logging.info("--- Category Strengths Report End ---")
         return jsonify({
             'team_headers': team_headers,
             'skater_stats': skater_data_rows,
-            'goalie_stats': goalie_data_rows
+            'goalie_stats': goalie_data_rows,
+            'trend_data': trend_data # Add new data to response
         })
 
     except Exception as e:

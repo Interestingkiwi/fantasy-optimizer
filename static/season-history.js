@@ -828,6 +828,127 @@
         }
 
 
+        /**
+             * Formats a rank and its delta into the "Rank (Delta)" string.
+             * e.g., 2 (-), 4 (+1), 1 (-2)
+             */
+            function formatRankDelta(rank, delta) {
+                if (rank === null || rank === undefined) {
+                    return '<span class="text-gray-500">-</span>';
+                }
+
+                let deltaStr = '(-)';
+                let deltaClass = 'text-gray-500';
+
+                if (delta !== null && delta !== undefined && delta !== 0) {
+                    if (delta > 0) { // Rank improved (e.g., 4 -> 1, delta = +3)
+                        deltaStr = `(+${delta})`;
+                        deltaClass = 'text-green-400';
+                    } else { // Rank worsened (e.g., 1 -> 4, delta = -3)
+                        deltaStr = `(${delta})`;
+                        deltaClass = 'text-red-400';
+                    }
+                }
+
+                return `${rank} <span class="${deltaClass}">${deltaStr}</span>`;
+            }
+
+            /**
+             * Creates the "All Season" trend table (Matrix)
+             */
+            function createRankTrendMatrixTable(categories, trendData) {
+                const weeks = trendData.weeks;
+                const matrixData = trendData.data;
+
+                if (weeks.length === 0) {
+                    return '<div class="bg-gray-800 rounded-lg shadow-lg p-4"><h3 class="text-lg font-semibold text-white mb-3">Category Rank Trends</h3><p class="text-gray-400">No completed weeks found to generate trend data.</p></div>';
+                }
+
+                let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                                <h3 class="text-lg font-semibold text-white mb-3">Category Rank Trends</h3>
+                                <div class="overflow-x-auto">
+                                    <table class="min-w-full divide-y divide-gray-700">
+                                        <thead>
+                                            <tr>
+                                                <th class="table-header !text-left">Category</th>`;
+
+                weeks.forEach(w => {
+                    html += `<th class="table-header">W${w}</th>`;
+                });
+
+                html += `           </tr>
+                                </thead>
+                                <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+                categories.forEach(cat => {
+                    html += `<tr><td class="table-cell !text-left font-semibold">${cat}</td>`;
+                    weeks.forEach(w => {
+                        const cellData = matrixData[cat] ? matrixData[cat][w] : [null, null];
+                        const rank = cellData ? cellData[0] : null;
+                        const delta = cellData ? cellData[1] : null;
+                        html += `<td class="table-cell text-center">${formatRankDelta(rank, delta)}</td>`;
+                    });
+                    html += `</tr>`;
+                });
+
+                html += `       </tbody>
+                            </table>
+                        </div>
+                    </div>`;
+                return html;
+            }
+
+            /**
+             * Creates the "Individual Week" trend table (List)
+             */
+             function createRankTrendListTable(listData) {
+         let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                         <h3 class="text-lg font-semibold text-white mb-3">Category Rank Trends</h3>
+                         <div class="overflow-x-auto">
+                             <table class="min-w-full divide-y divide-gray-700">
+                                 <thead>
+                                     <tr>
+                                         <th class="table-header !text-left">Category</th>
+                                         <th class="table-header">Rank</th>
+                                         <th class="table-header">Change</th>
+                                     </tr>
+                                 </thead>
+                                 <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+         listData.forEach(row => {
+             // Get the full formatted string, e.g., "4 <span>...</span>"
+             const rankStr = formatRankDelta(row.rank, row.delta);
+
+             // --- [START] FIX ---
+             // Find the position of the delta span.
+             const spanIndex = rankStr.indexOf('<span');
+             let deltaStr;
+
+             if (spanIndex !== -1) {
+                 // If a span exists, extract it.
+                 deltaStr = rankStr.substring(spanIndex);
+             } else {
+                 // Otherwise (e.g., rank is 4, delta is 0), default to (-)
+                 deltaStr = '<span class="text-gray-500">(-)</span>';
+             }
+             // --- [END] FIX ---
+
+             html += `<tr>
+                         <td class="table-cell !text-left font-semibold">${row.category}</td>
+                         <td class="table-cell text-center">${row.rank || '-'}</td>
+                         <td class="table-cell text-center">${deltaStr}</td>
+                     </tr>`;
+         });
+
+         html += `       </tbody>
+                     </table>
+                 </div>
+             </div>`;
+         return html;
+     }
+
+
+
     // --- MODIFIED: Function to fetch and render transaction success ---
     async function fetchTransactionSuccess(teamName, week, viewMode) {
         loadingSpinner.classList.remove('hidden');
@@ -949,16 +1070,36 @@
             const data = await response.json();
             if (data.error) throw new Error(data.error);
 
-            // --- NEW: Pre-process data to add heatmap colors ---
+            // (This part is unchanged)
             addHeatmapData(data.skater_stats, data.team_headers);
             addHeatmapData(data.goalie_stats, data.team_headers);
-            // --- END NEW ---
-
-            // Create the two tables using the new dynamic helper
             const skaterTable = createDynamicCategoryTable('Skater Stats', data.team_headers, data.skater_stats);
             const goalieTable = createDynamicCategoryTable('Goalie Stats', data.team_headers, data.goalie_stats);
 
-            // Render tables stacked vertically
+            // --- [START] MODIFIED LOGIC for Trend Table & Styling ---
+            let trendTableHtml = '';
+            // Default to a full-width container
+            let trendTableContainerOpen = '<div>';
+            const trendTableContainerClose = '</div>';
+
+            if (data.trend_data) {
+                // Get all categories in the correct order
+                const all_categories = data.skater_stats.map(s => s.category)
+                    .concat(data.goalie_stats.map(g => g.category));
+
+                if (data.trend_data.type === 'matrix') {
+                    trendTableHtml = createRankTrendMatrixTable(all_categories, data.trend_data);
+                } else if (data.trend_data.type === 'list') {
+                    trendTableHtml = createRankTrendListTable(data.trend_data.data);
+
+                    // --- STYLING FIX: Change the container for the list view ---
+                    // This will be 50% width on large screens, max-width on smaller, and centered.
+                    trendTableContainerOpen = '<div class="max-w-xl lg:max-w-none lg:w-1/2 mx-auto lg:mx-0">';
+                }
+            }
+            // --- [END] MODIFIED LOGIC ---
+
+            // Render tables stacked vertically, using the new container
             historyContent.innerHTML = `
                 <div class="flex flex-col gap-6">
                     <div>
@@ -967,6 +1108,10 @@
                     <div>
                         ${goalieTable}
                     </div>
+
+                    ${trendTableContainerOpen}
+                        ${trendTableHtml}
+                    ${trendTableContainerClose}
                 </div>
             `;
 
