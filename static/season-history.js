@@ -69,6 +69,7 @@
         reportOptions += '<option value="please_select">--Please Select--</option>'; // Your default
         reportOptions += '<option value="bench_points">Bench Points</option>';
         reportOptions += '<option value="transaction_history">Transaction History</option>';
+        reportOptions += '<option value="category_strengths">Category Strengths</option>';
         reportOptions += '<option value="tbd">TBD</option>';
 
         reportSelect.innerHTML = reportOptions;
@@ -671,6 +672,162 @@
     }
 
 
+    function createDynamicCategoryTable(title, teamHeaders, statRows) {
+        let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                        <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
+
+        if (!statRows || statRows.length === 0 || !teamHeaders || teamHeaders.length === 0) {
+            html += '<p class="text-gray-400">No stats found for this period.</p></div>';
+            return html;
+        }
+
+        html += `<div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-700">
+                        <thead>
+                            <tr>
+                                <th class="table-header !text-left">Category</th>`;
+
+        // (Header loop is unchanged)
+        for (const teamName of teamHeaders) {
+            const headerClass = (teamName === teamHeaders[0]) ? "!text-yellow-400" : "";
+            html += `<th class="table-header ${headerClass}">${teamName}</th>`;
+
+            if (teamName === teamHeaders[0]) {
+                html += `<th class="table-header">Rank</th>`;
+                html += `<th class="table-header">Avg Delta</th>`;
+            }
+        }
+
+        html += `           </tr>
+                        </thead>
+                        <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+        // Create a row for each category
+        for (const categoryRow of statRows) {
+            html += `<tr>
+                        <td class="table-cell !text-left font-semibold">${categoryRow.category}</td>`;
+
+            // --- MODIFIED: Add dark text class to heatmap cells ---
+            for (const teamName of teamHeaders) {
+                // Get the base cell class (for user's column)
+                const baseCellClass = (teamName === teamHeaders[0]) ? "text-yellow-400" : "";
+
+                // Get the pre-calculated color
+                const bgColor = (categoryRow.heatmapColors && categoryRow.heatmapColors[teamName])
+                                ? categoryRow.heatmapColors[teamName]
+                                : '';
+
+                // --- FIX: Add font-semibold and text-gray-800 for dark text ---
+                // This mimics the 'text-gray-600' from lineups.js
+                html += `<td class="table-cell text-center font-semibold text-gray-800" style="background-color: ${bgColor};">
+                            ${categoryRow[teamName]}
+                         </td>`;
+                // --- END FIX ---
+
+                // This part is for Rank and Avg Delta (no heatmap)
+                if (teamName === teamHeaders[0]) {
+                    // We *keep* the yellow text for the Rank column
+                    html += `<td class="table-cell text-center ${baseCellClass}">${categoryRow['Rank']}</td>`;
+                    html += `<td class="table-cell text-center">${formatDelta(categoryRow['Average Delta'])}</td>`;
+                }
+            }
+            // --- END MODIFICATION ---
+            html += `</tr>`;
+        }
+
+        html += `       </tbody>
+                    </table>
+                </div>
+            </div>`;
+        return html;
+    }
+
+
+        function formatDelta(delta) {
+                if (delta > 0) {
+                    return `<span class="text-green-400">+${delta.toFixed(2)}</span>`;
+                } else if (delta < 0) {
+                    return `<span class="text-red-400">${delta.toFixed(2)}</span>`;
+                }
+                return `<span class="text-gray-500">0.00</span>`;
+            }
+
+
+            /**
+         * Pre-calculates heatmap colors for each row and stores them
+         * in a `heatmapColors` object on the row itself.
+         * USES HSL logic from lineups.js (based on RANK, not value)
+         */
+        function addHeatmapData(statRows, teamHeaders) {
+            // Define reverse-scoring categories here
+            const reverseScoringCats = new Set(['GA', 'GAA']);
+
+            // Define the rank range. Min is always 1. Max is number of teams.
+            const minRank = 1;
+            const maxRank = teamHeaders.length; // e.g., 12 teams
+
+            for (const row of statRows) {
+                const cat = row.category;
+                const isReverse = reverseScoringCats.has(cat);
+
+                // 1. Get all values and map them to objects { teamName, value }
+                //    This is necessary to sort them while keeping track of the team.
+                const teamValues = teamHeaders.map(teamName => ({
+                    teamName: teamName,
+                    value: row[teamName]
+                }));
+
+                // 2. Sort the values to determine rank
+                teamValues.sort((a, b) => {
+                    if (isReverse) {
+                        return a.value - b.value; // Low is better
+                    }
+                    return b.value - a.value; // High is better
+                });
+
+                // 3. Create a map of { teamName: rank }
+                const teamRanks = {};
+                let currentRank = 1;
+                for (let i = 0; i < teamValues.length; i++) {
+                    const teamName = teamValues[i].teamName;
+
+                    // Handle ties: if value is same as previous, give same rank
+                    if (i > 0 && teamValues[i].value === teamValues[i-1].value) {
+                        teamRanks[teamName] = teamRanks[teamValues[i-1].teamName];
+                    } else {
+                        currentRank = i + 1;
+                        teamRanks[teamName] = currentRank;
+                    }
+                }
+
+                row.heatmapColors = {}; // Create object to store colors
+
+                // 4. Calculate color for each team BASED ON ITS RANK
+                for (const teamName of teamHeaders) {
+                    const rank = teamRanks[teamName]; // Get the team's rank (e.g., 1, 2, 5...)
+
+                    // 5. Calculate normalized percentage (t) based on RANK, not value
+                    //    This is the logic from lineups.js
+                    //    A rank of 1 (best) will be 0%. A rank of 12 (worst) will be 100%.
+                    let percentage = 0.5; // Default for 1-team league
+                    if (maxRank > minRank) {
+                        const clampedRank = Math.max(minRank, Math.min(rank, maxRank));
+                        percentage = (clampedRank - minRank) / (maxRank - minRank);
+                    }
+
+                    // 6. Calculate HSL color (same as lineups.js)
+                    //    We want green (hue 120) at 0% (best rank)
+                    //    and red (hue 0) at 100% (worst rank).
+                    const hue = (1 - percentage) * 120;
+
+                    const color = `hsl(${hue}, 65%, 75%)`;
+
+                    row.heatmapColors[teamName] = color;
+                }
+            }
+        }
+
+
     // --- MODIFIED: Function to fetch and render transaction success ---
     async function fetchTransactionSuccess(teamName, week, viewMode) {
         loadingSpinner.classList.remove('hidden');
@@ -776,6 +933,52 @@
     }
 
 
+    async function fetchCategoryStrengths(teamName, week) {
+        loadingSpinner.classList.remove('hidden');
+        historyContent.innerHTML = '';
+        errorDiv.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/history/category_strengths', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ team_name: teamName, week: week })
+            });
+
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+
+            // --- NEW: Pre-process data to add heatmap colors ---
+            addHeatmapData(data.skater_stats, data.team_headers);
+            addHeatmapData(data.goalie_stats, data.team_headers);
+            // --- END NEW ---
+
+            // Create the two tables using the new dynamic helper
+            const skaterTable = createDynamicCategoryTable('Skater Stats', data.team_headers, data.skater_stats);
+            const goalieTable = createDynamicCategoryTable('Goalie Stats', data.team_headers, data.goalie_stats);
+
+            // Render tables stacked vertically
+            historyContent.innerHTML = `
+                <div class="flex flex-col gap-6">
+                    <div>
+                        ${skaterTable}
+                    </div>
+                    <div>
+                        ${goalieTable}
+                    </div>
+                </div>
+            `;
+
+        } catch (error) {
+            console.error('Error fetching category strengths:', error);
+            showError(error.message);
+        } finally {
+            loadingSpinner.classList.add('hidden');
+        }
+    }
+
+
     // --- MODIFIED: fetchAndRenderTable to pass view mode ---
     async function fetchAndRenderTable() {
             const selectedTeam = yourTeamSelect.value;
@@ -794,7 +997,10 @@
                 case 'transaction_history':
                     await fetchTransactionSuccess(selectedTeam, selectedWeek, currentViewMode);
                     break;
-                // --- END MODIFICATION ---
+
+              case 'category_strengths':
+                  await fetchCategoryStrengths(selectedTeam, selectedWeek);
+                  break;
 
                 case 'tbd':
                     loadingSpinner.classList.remove('hidden');
