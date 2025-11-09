@@ -37,6 +37,37 @@
         freeAgents: { key: 'total_cat_rank', direction: 'ascending' }
     };
 
+    // --- NEW HELPER FUNCTIONS ---
+    function formatPercentage(decimal) {
+        if (decimal === null || decimal === undefined) return 'N/A';
+        try {
+            const num = parseFloat(decimal);
+            if (isNaN(num)) return 'N/A';
+            return (num * 100).toFixed(1) + '%';
+        } catch (e) {
+            return 'N/A';
+        }
+    }
+
+    function formatSecondsToMMSS(seconds) {
+        if (seconds === null || seconds === undefined) return 'N/A';
+        try {
+            const s = parseInt(seconds, 10);
+            if (isNaN(s)) return 'N/A';
+            const minutes = Math.floor(s / 60);
+            const remainingSeconds = s % 60;
+            return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
+        } catch (e) {
+            return 'N/A';
+        }
+    }
+
+    function formatNullable(value) {
+        return value ?? 'N/A';
+    }
+    // --- END NEW HELPER FUNCTIONS ---
+
+
     // --- Caching Functions ---
     function saveStateToCache() {
         try {
@@ -319,6 +350,11 @@
             return;
         }
         const playersToDisplay = shouldCap ? players.slice(0, 100) : players;
+
+        // --- START MODIFICATION: Update colspans ---
+        const totalColumns = 8 + rankedCategories.length;
+        // --- END MODIFICATION ---
+
         let tableHtml = `
             <div class="bg-gray-900 rounded-lg shadow">
                 <h2 class="text-2xl font-bold text-white p-4 bg-gray-800 rounded-t-lg">${title}</h2>
@@ -332,6 +368,10 @@
                                 <th class="px-2 py-2 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Positions</th>
                                 <th class="px-2 py-2 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">This Week</th>
                                 <th class="px-2 py-2 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Next Week</th>
+                                <th class="px-2 py-2 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">
+                                    PP Utilization
+                                    <span class="text-xs text-gray-400 font-light block">(Click cell)</span>
+                                </th>
                                 <th class="px-2 py-2 text-left text-xs font-bold text-gray-300 uppercase tracking-wider sortable" data-sort-key="total_cat_rank" data-table-type="${tableType}">Total Cat Rank</th>
         `;
         rankedCategories.forEach(cat => {
@@ -341,12 +381,14 @@
         });
         tableHtml += `
                             </tr>
-                            <tr><td colspan="${7 + rankedCategories.length}" class="text-center text-xs text-gray-500 py-1">Click headers to sort</td></tr>
-                        </thead>
+                            <tr><td colspan="${totalColumns}" class="text-center text-xs text-gray-500 py-1">Click headers to sort</td></tr>
+                            </thead>
                         <tbody class="bg-gray-800 divide-y divide-gray-700">
         `;
         if (playersToDisplay.length === 0) {
-            tableHtml += `<tr><td colspan="${7 + rankedCategories.length}" class="text-center py-4">No players match the current filter.</td></tr>`;
+            // --- START MODIFICATION: Update colspan ---
+            tableHtml += `<tr><td colspan="${totalColumns}" class="text-center py-4">No players match the current filter.</td></tr>`;
+            // --- END MODIFICATION ---
         } else {
             playersToDisplay.forEach(player => {
 
@@ -393,6 +435,21 @@
                         <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-300">${player.positions}</td>
                         <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-300">${gamesThisWeekHtml}</td>
                         <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-300">${(player.games_next_week || []).join(', ')}</td>
+
+                        <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-300 cursor-pointer hover:bg-gray-700 pp-util-cell"
+                            data-player-name="${player.player_name}"
+                            data-avg-pp-pct="${player.avg_ppTimeOnIcePctPerGame}"
+                            data-lg-pp-toi="${player.lg_ppTimeOnIce}"
+                            data-lg-pp-pct="${player.lg_ppTimeOnIcePctPerGame}"
+                            data-lg-ppa="${player.lg_ppAssists}"
+                            data-lg-ppg="${player.lg_ppGoals}"
+                            data-lw-pp-toi="${player.avg_ppTimeOnIce}"
+                            data-lw-pp-pct="${player.avg_ppTimeOnIcePctPerGame}"
+                            data-lw-ppa="${player.total_ppAssists}"
+                            data-lw-ppg="${player.total_ppGoals}"
+                            data-lw-gp="${player.team_games_played}">
+                            ${formatPercentage(player.avg_ppTimeOnIcePctPerGame)}
+                        </td>
                         <td class="px-2 py-2 whitespace-nowrap text-sm font-bold text-yellow-300">${player.total_cat_rank}</td>
                 `;
                 rankedCategories.forEach(cat => {
@@ -420,8 +477,16 @@
         const key = e.target.dataset.sortKey;
         const tableType = e.target.dataset.tableType;
 
-        sortConfig[tableType].key = key;
-        sortConfig[tableType].direction = 'ascending';
+        // --- START MODIFICATION: Fix sorting logic ---
+        // If clicking the same key, reverse direction
+        if (sortConfig[tableType].key === key) {
+            sortConfig[tableType].direction = sortConfig[tableType].direction === 'ascending' ? 'descending' : 'ascending';
+        } else {
+            // Otherwise, set new key and default to ascending
+            sortConfig[tableType].key = key;
+            sortConfig[tableType].direction = 'ascending';
+        }
+        // --- END MODIFICATION ---
 
         filterAndSortPlayers();
         saveStateToCache();
@@ -680,10 +745,78 @@
                 fetchData(selectedCategories);
             });
         }
+
+        // --- START MODIFICATION: Add event delegation for modal ---
+        const handleCellClick = (e) => {
+            const cell = e.target.closest('.pp-util-cell');
+            if (cell) {
+                const data = cell.dataset;
+
+                const modalTitle = document.getElementById('pp-modal-title');
+                const modalContent = document.getElementById('pp-modal-content');
+
+                modalTitle.textContent = `${data.playerName} - PP Stats`;
+
+                modalContent.innerHTML = `
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="text-md font-semibold text-white mb-2">Last Game</h4>
+                            <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PP TOI</dt><dd class="text-sm font-medium">${formatSecondsToMMSS(data.lgPpToi)}</dd></div>
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PP %</dt><dd class="text-sm font-medium">${formatPercentage(data.lgPpPct)}</dd></div>
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PPA</dt><dd class="text-sm font-medium">${formatNullable(data.lgPpa)}</dd></div>
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PPG</dt><dd class="text-sm font-medium">${formatNullable(data.lgPpg)}</dd></div>
+                            </dl>
+                        </div>
+                        <div>
+                            <h4 class="text-md font-semibold text-white mb-2">Last Week</h4>
+                            <dl class="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2">
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Average PP TOI</dt><dd class="text-sm font-medium">${formatSecondsToMMSS(data.lwPpToi)}</dd></div>
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Average PP %</dt><dd class="text-sm font-medium">${formatPercentage(data.lwPpPct)}</dd></div>
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Total PPA</dt><dd class="text-sm font-medium">${formatNullable(data.lwPpa)}</dd></div>
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Total PPG</dt><dd class="text-sm font-medium">${formatNullable(data.lwPpg)}</dd></div>
+                                <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Games Played</dt><dd class="text-sm font-medium">${formatNullable(data.lwGp)}</dd></div>
+                            </dl>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById('pp-stats-modal').classList.remove('hidden');
+            }
+        };
+
+        waiverContainer.addEventListener('click', handleCellClick);
+        freeAgentContainer.addEventListener('click', handleCellClick);
+        // --- END MODIFICATION ---
     }
 
     // --- Initial Load ---
     async function init() {
+        // --- START MODIFICATION: Add modal HTML and listeners ---
+        const modalHTML = `
+        <div id="pp-stats-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+            <div class="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-lg relative border border-gray-700">
+                <button id="pp-modal-close" class="absolute top-3 right-3 text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+                <h3 id="pp-modal-title" class="text-xl font-bold text-white mb-4">Player PP Stats</h3>
+                <div id="pp-modal-content" class="text-gray-300">
+                    </div>
+            </div>
+        </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        document.getElementById('pp-modal-close').addEventListener('click', () => {
+            document.getElementById('pp-stats-modal').classList.add('hidden');
+        });
+
+        document.getElementById('pp-stats-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'pp-stats-modal') {
+                document.getElementById('pp-stats-modal').classList.add('hidden');
+            }
+        });
+        // --- END MODIFICATION ---
+
+
         await getTimestamp(); // Fetch timestamp on initial load
         const cachedState = loadStateFromCache();
         if (cachedState) {
