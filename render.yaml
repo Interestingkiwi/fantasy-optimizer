@@ -21,7 +21,7 @@ services:
         sync: false
       - key: FLASK_SECRET_KEY
         generateValue: true
-    disks:
+    disk:
       - name: db-storage
         mountPath: /var/data/dbs
 
@@ -58,7 +58,7 @@ services:
         sync: false
       - key: YAHOO_AUTH_JSON
         sync: false
-    disks:
+    disk:
       - name: db-storage
         mountPath: /var/data/dbs
 
@@ -76,6 +76,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.4
-    disks:
+    disk:
       - name: db-storage # Must match the same disk
         mountPath: /var/data/dbs # Must match the same path
