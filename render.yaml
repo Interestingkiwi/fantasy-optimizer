@@ -27,3 +27,67 @@ services:
         generateValue: true # Render will generate a secret key for you
     healthCheckPath: /healthz
 
+services:
+  # 1. Your existing Web Service
+  - type: web
+    name: fantasystreams
+    env: python
+    plan: free
+    branch: main
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app -w 4 -k gevent --timeout 120 --graceful-timeout 120"
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      - key: YAHOO_CONSUMER_KEY
+        sync: false
+      - key: YAHOO_CONSUMER_SECRET
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+    disks:
+      - name: db-storage
+        mountPath: /var/data/dbs
+
+  # 2. Your existing WEEKLY (Monday) Job
+  - type: cron
+    name: weekly-db-builder
+    env: python
+    schedule: "0 8 * * 1" # Runs at 8:00 UTC on Monday
+    buildCommand: |
+      pip install -r requirements.txt
+      # ... (seed commands) ...
+    startCommand: |
+      echo "Starting weekly job..."
+      python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s $YAHOO_CONSUMER_SECRET && \
+      echo "Running create_projection_db.py..." && \
+      python jobs/create_projection_db.py && \
+      echo "Running toi_script.py..." && \
+      python jobs/toi_script.py && \
+      echo "Weekly job finished successfully."
+    envVars:
+      # ... (your weekly job env vars) ...
+      - key: YAHOO_AUTH_JSON
+        sync: false
+    disks:
+      - name: db-storage
+        mountPath: /var/data/dbs
+
+  # 3. Your NEW DAILY (Tue-Sun) Job
+  - type: cron
+    name: daily-toi-updater
+    env: python
+    schedule: "0 8 * * 0,2-6"
+    # Schedule: "At 08:00 UTC on every day except Monday"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: |
+      echo "Starting daily TOI-only update..."
+      python jobs/toi_script.py
+      echo "Daily TOI update finished."
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+    disks:
+      - name: db-storage # Must match the same disk
+        mountPath: /var/data/dbs # Must match the same path

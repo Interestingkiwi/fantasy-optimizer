@@ -25,4 +25,70 @@ services:
         sync: false
       - key: FLASK_SECRET_KEY
         generateValue: true # Render will generate a secret key for you
+    healthCheckPath: /healthz
 
+services:
+  # Your existing 'fantasystreams' web service (with disk)
+  - type: web
+    name: fantasystreams
+    # ... (all your other web service keys) ...
+    disks:
+      - name: db-storage
+        mountPath: /var/data/dbs # <-- Use your existing path
+
+  # New Weekly Cron Job to build everything
+# New Weekly Cron Job to build everything
+  - type: cron
+    name: weekly-db-builder
+    env: python
+    # Schedule: "At 08:00 UTC on Monday" (e.g., 3:00 AM EST / 4:00 AM EDT)
+    # Adjust this as needed.
+    schedule: "0 8 * * 1"
+    # Make sure this matches your web service region (e.g., ohio)
+    # region: ohio
+    buildCommand: |
+      pip install -r requirements.txt
+      echo "Seeding persistent disk with CSV files..."
+      # Create the directory just in case
+      mkdir -p /var/data/dbs
+      # Copy from repo's seed_data/ folder to the disk
+      # The '-n' (no-clobber) flag prevents overwriting if they exist
+      cp -n seed_data/Proj1g.csv /var/data/dbs/Proj1g.csv
+      cp -n seed_data/Proj1s.csv /var/data/dbs/Proj1s.csv
+      cp -n seed_data/Proj2g.csv /var/data/dbs/Proj2g.csv
+      cp -n seed_data/Proj2s.csv /var/data/dbs/Proj2s.csv
+    startCommand: |
+      echo "Starting weekly job..."
+      
+      # --- UPDATED OAUTH FIX ---
+      # Check if the persistent token.json exists. If not, create it.
+      # This seeds the token on the first run.
+      if [ ! -f /var/data/dbs/token.json ]; then
+        echo "Seeding persistent token.json..."
+        echo $YAHOO_AUTH_JSON > /var/data/dbs/token.json
+      fi
+      
+      # --- RUN THE SCRIPTS IN SEQUENCE ---
+      echo "Running fetch_player_ids.py..."
+      python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s $YAHOO_CONSUMER_SECRET && \
+      echo "Running create_projection_db.py..." && \
+      python jobs/create_projection_db.py && \
+      echo "Running toi_script.py..." && \
+      python jobs/toi_script.py && \
+      
+      echo "Weekly job finished successfully."
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      # --- Env Vars for your scripts ---
+      - key: LEAGUE_ID
+        value: "YOUR_LEAGUE_ID_HERE" # Set this in Render
+      - key: YAHOO_CONSUMER_KEY
+        sync: false # Set this in Render
+      - key: YAHOO_CONSUMER_SECRET
+        sync: false # Set this in Render
+      - key: YAHOO_AUTH_JSON
+        sync: false # Set this from your local token.json
+    disks:
+      - name: db-storage # Must match the name of your disk
+        mountPath: /var/data/dbs # Must match your disk path

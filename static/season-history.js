@@ -80,7 +80,94 @@
         yourTeamSelect.addEventListener('change', fetchAndRenderTable);
         reportSelect.addEventListener('change', handleReportChange);
         viewToggleButton.addEventListener('click', toggleViewMode);
+        historyContent.addEventListener('click', handleTableSort);
     }
+
+
+    function handleTableSort(event) {
+            const header = event.target.closest('.sortable-header');
+            if (!header) return; // Clicked somewhere else
+
+            const table = header.closest('table');
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const sortKey = header.dataset.sortKey;
+
+            // --- Determine sort direction ---
+            let currentDir = header.dataset.sortDir || 'none';
+            let nextDir;
+            if (currentDir === 'asc') {
+                nextDir = 'desc'; // Flip from asc to desc
+            } else {
+                nextDir = 'asc'; // Default to asc (or flip from desc)
+            }
+
+            // --- Clear old sort indicators ---
+            table.querySelectorAll('.sortable-header').forEach(th => {
+                th.dataset.sortDir = 'none';
+                // Remove existing arrows
+                const arrow = th.querySelector('.sort-arrow');
+                if (arrow) arrow.remove();
+            });
+
+            // --- Set new direction and indicator ---
+            header.dataset.sortDir = nextDir;
+            const arrowSpan = document.createElement('span');
+            arrowSpan.className = 'sort-arrow ml-1'; // ml-1 for margin
+            arrowSpan.textContent = (nextDir === 'asc') ? '▲' : '▼';
+            header.appendChild(arrowSpan);
+
+            // --- Define reverse scoring categories ---
+            const reverseScoringCats = new Set(['GA', 'GAA']);
+            const isReverseSort = reverseScoringCats.has(sortKey);
+
+            // --- Find column index ---
+            const headers = Array.from(header.parentElement.children);
+            const colIndex = headers.indexOf(header);
+
+            // --- Sort the rows ---
+            rows.sort((rowA, rowB) => {
+                const cellA = rowA.children[colIndex];
+                const cellB = rowB.children[colIndex];
+
+                let valA, valB;
+
+                // Handle string sorting
+                if (sortKey === 'teamName' || sortKey === 'Player') {
+                    valA = cellA.textContent.toLowerCase();
+                    valB = cellB.textContent.toLowerCase();
+                } else {
+                // Handle numeric sorting (for GP and all stat cats)
+                // Use firstChild.textContent to get value before <br>
+                    valA = parseFloat(cellA.firstChild ? cellA.firstChild.textContent : cellA.textContent) || 0;
+                    valB = parseFloat(cellB.firstChild ? cellB.firstChild.textContent : cellB.textContent) || 0;
+                }
+
+                // --- Get the raw difference ---
+                let sortVal = 0;
+                if (typeof valA === 'string') {
+                    sortVal = valA.localeCompare(valB); // A-Z
+                } else {
+                    sortVal = valA - valB; // 1-10
+                }
+
+                // --- Handle direction ---
+                if (nextDir === 'desc') {
+                    sortVal *= -1; // Z-A or 10-1
+                }
+
+                // --- Handle reverse scoring (flips the final direction) ---
+                if (isReverseSort) {
+                    sortVal *= -1;
+                }
+
+                return sortVal;
+            });
+
+            // --- Re-append sorted rows ---
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
 
     // --- MODIFIED: Removed teamSelectWrapper logic ---
     function handleReportChange() {
@@ -672,6 +759,156 @@
     }
 
 
+    function addHeatmapToStatRows(rows, headers, reverseScoringCats) {
+            if (rows.length === 0) return;
+
+            for (const header of headers) {
+                const isReverse = reverseScoringCats.has(header);
+
+                // 1. Get all valid values for this header
+                const values = rows.map(r => r[header]).filter(v => v !== null && v !== undefined);
+                if (values.length === 0) continue;
+
+                let min = Math.min(...values);
+                let max = Math.max(...values);
+
+                // 2. Iterate and apply colors
+                for (const row of rows) {
+                    if (!row.heatmapColors) {
+                        row.heatmapColors = {};
+                    }
+
+                    const value = row[header];
+                    if (value === null || value === undefined) {
+                        row.heatmapColors[header] = 'transparent';
+                        continue;
+                    }
+
+                    let t = 0.5; // Default for single value
+                    if (max > min) {
+                        if (isReverse) {
+                            t = (max - value) / (max - min); // 1.0 for min, 0.0 for max
+                        } else {
+                            t = (value - min) / (max - min); // 1.0 for max, 0.0 for min
+                        }
+                    } else if (max === min && values.length > 1) {
+                        // All values are the same
+                        t = 0.5;
+                    }
+
+                    // Use HSLA for transparency gradient
+                    // Hue 120 (green), Sat 60%, Light 45% (a bit darker), Alpha 't'
+                    // 0.0 (worst) = transparent, 1.0 (best) = solid green
+                    row.heatmapColors[header] = `hsla(120, 60%, 45%, ${t.toFixed(2)})`;
+                }
+            }
+        }
+
+
+        function createLeagueTransactionStatsTable(title, headers = [], rows = []) {
+            let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
+
+            if (rows.length === 0) {
+                html += `<p class="text-gray-400">No ${title.toLowerCase().includes('skater') ? 'skaters' : 'goalies'} added league-wide.</p></div>`;
+                return html;
+            }
+
+            // --- Goalie sub-category logic (copied from createAddedPlayerStatsTable) ---
+            const goalieCats = {
+                'SVpct': ['SV', 'SA'],
+                'GAA': ['GA', 'TOI/G']
+            };
+            const headersSet = new Set(headers);
+            const catsToSkip = new Set();
+            if (headersSet.has('SVpct')) {
+                goalieCats['SVpct'].forEach(cat => catsToSkip.add(cat));
+            }
+            if (headersSet.has('GAA')) {
+                goalieCats['GAA'].forEach(cat => catsToSkip.add(cat));
+            }
+            // --- END Goalie logic ---
+
+            // --- [NEW] Heatmap pre-calculation ---
+            const headersToDisplay = headers.filter(h => h !== 'GP' && !catsToSkip.has(h));
+            const reverseScoringCats = new Set(['GA', 'GAA']);
+            addHeatmapToStatRows(rows, headersToDisplay, reverseScoringCats);
+            // --- [END] Heatmap ---
+
+
+            html += `<div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-700">
+                            <thead>
+                                <tr>
+                                    <th class="table-header !text-left sortable-header cursor-pointer" data-sort-key="teamName">Team</th>
+                                    <th class="table-header !text-left sortable-header cursor-pointer" data-sort-key="Player">Player</th>
+                                    <th class="table-header sortable-header cursor-pointer" data-sort-key="GP">GP</th>
+                                    `;
+
+            for (const header of headersToDisplay) {
+                // --- [MODIFIED] Added sortable classes and data-key ---
+                html += `<th class="table-header sortable-header cursor-pointer" data-sort-key="${header}">${header}</th>`;
+            }
+
+            html += `           </tr>
+                            </thead>
+                            <tbody class="bg-gray-900 divide-y divide-gray-700">`;
+
+            // Sort rows by team name first, then player name (for initial view)
+            rows.sort((a, b) => {
+                if (a.teamName < b.teamName) return -1;
+                if (a.teamName > b.teamName) return 1;
+                if (a.Player < b.Player) return -1;
+                if (a.Player > b.Player) return 1;
+                return 0;
+            });
+
+            for (const row of rows) {
+                html += `<tr>
+                            <td class="table-cell !text-left">${row['teamName']}</td>
+                            <td class="table-cell !text-left">${row['Player']}</td>
+                            <td class="table-cell text-center">${row['GP'] || 0}</td>
+                            `;
+
+                for (const header of headersToDisplay) {
+                    let value = row[header] || 0;
+                    let displayHtml = '';
+
+                    // --- Formatting for calculated stats (copied from createAddedPlayerStatsTable) ---
+                    if (header === 'SVpct') {
+                        const sv = row['SV'] || 0;
+                        const sa = row['SA'] || 0;
+                        displayHtml = `${value.toFixed(3)}
+                                     <br><span class="text-xs text-gray-400">(${sv}/${sa})</span>`;
+                    } else if (header === 'GAA') {
+                        const ga = row['GA'] || 0;
+                        const toi = row['TOI/G'] || 0;
+                        const toiDisplay = Number.isInteger(toi) ? toi : toi.toFixed(2);
+                        displayHtml = `${value.toFixed(2)}
+                                     <br><span class="text-xs text-gray-400">(${ga} GA / ${toiDisplay} TOI)</span>`;
+                    } else {
+                        displayHtml = Number.isInteger(value) ? value : value.toFixed(2);
+                    }
+                    // --- END Formatting ---
+
+                    // --- [NEW] Get heatmap color and apply style + dark text ---
+                    const bgColor = (row.heatmapColors && row.heatmapColors[header]) ? row.heatmapColors[header] : 'transparent';
+                    // Add dark text and bolding if there's a background color
+                    const textClass = (bgColor !== 'transparent') ? 'text-gray-800 font-semibold' : '';
+
+                    html += `<td class="table-cell text-center align-middle ${textClass}" style="background-color: ${bgColor};">${displayHtml}</td>`;
+                }
+                html += `</tr>`;
+            }
+
+            html += `       </tbody>
+                        </table>
+                    </div>
+                </div>`;
+            return html;
+        }
+
+
     function createDynamicCategoryTable(title, teamHeaders, statRows) {
         let html = `<div class="bg-gray-800 rounded-lg shadow-lg p-4">
                         <h3 class="text-lg font-semibold text-white mb-3">${title}</h3>`;
@@ -959,7 +1196,6 @@
             const response = await fetch('/api/history/transaction_history', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                // --- MODIFIED: Send the viewMode ---
                 body: JSON.stringify({
                     team_name: teamName,
                     week: week,
@@ -971,9 +1207,8 @@
             const data = await response.json();
             if (data.error) throw new Error(data.error);
 
-            // --- NEW: Handle different view modes ---
             if (data.view_mode === 'team') {
-                // --- TEAM VIEW LOGIC ---
+                // --- TEAM VIEW LOGIC (Unchanged) ---
                 const addsTable = createTransactionTable('Player Adds', data.adds);
                 const dropsTable = createTransactionTable('Player Drops', data.drops);
 
@@ -1007,43 +1242,49 @@
                 `;
 
             } else if (data.view_mode === 'league') {
-                // --- LEAGUE VIEW LOGIC ---
-                let leagueHtml = '';
+                // --- [START] LEAGUE VIEW LOGIC (MODIFIED) ---
+
+                const allSkaters = [];
+                const allGoalies = [];
                 const teamNames = Object.keys(data.league_data).sort();
 
-                if (teamNames.length === 0) {
-                     leagueHtml = '<p class="text-gray-400">No transactions found for any team this week.</p>';
-                }
-
+                // 1. Aggregate all players into single arrays, adding teamName
                 for (const teamName of teamNames) {
                     const teamData = data.league_data[teamName];
-                    const skaterStatsHtml = createAddedPlayerStatsTable(
-                        'Skaters',
-                        data.skater_stat_headers,
-                        teamData.skaters
-                    );
-                    const goalieStatsHtml = createAddedPlayerStatsTable(
-                        'Goalies',
-                        data.goalie_stat_headers,
-                        teamData.goalies
-                    );
 
-                    leagueHtml += `
-                        <div class="bg-gray-900 rounded-lg shadow-lg p-4 space-y-4">
-                            <h2 class="text-xl font-semibold text-white">${teamName}</h2>
-                            ${skaterStatsHtml}
-                            ${goalieStatsHtml}
-                        </div>
-                    `;
+                    teamData.skaters.forEach(skater => {
+                        // Add the teamName to the skater object
+                        allSkaters.push({ ...skater, teamName: teamName });
+                    });
+
+                    teamData.goalies.forEach(goalie => {
+                        // Add the teamName to the goalie object
+                        allGoalies.push({ ...goalie, teamName: teamName });
+                    });
                 }
 
-                // --- MODIFICATION: Replaced single-column layout with a 3-column grid ---
-                // This will be 1 column on small, 2 on medium, and 3 on extra-large screens.
-                historyContent.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">${leagueHtml}</div>`;
-                // --- END MODIFICATION ---
+                // 2. Create the two league-wide tables using the new helper
+                const allSkatersTable = createLeagueTransactionStatsTable(
+                    'All Added Skaters (League-wide)',
+                    data.skater_stat_headers,
+                    allSkaters
+                );
 
+                const allGoaliesTable = createLeagueTransactionStatsTable(
+                    'All Added Goalies (League-wide)',
+                    data.goalie_stat_headers,
+                    allGoalies
+                );
+
+                // 3. Render the two tables stacked vertically
+                historyContent.innerHTML = `
+                    <div class="flex flex-col gap-6">
+                        ${allSkatersTable}
+                        ${allGoaliesTable}
+                    </div>
+                `;
+                // --- [END] LEAGUE VIEW LOGIC (MODIFIED) ---
             }
-            // --- END NEW ---
 
         } catch (error) {
             console.error('Error fetching transaction data:', error);
