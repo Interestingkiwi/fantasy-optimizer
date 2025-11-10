@@ -17,3 +17,6 @@ services:
         sync: false
       - key: FLASK_SECRET_KEY
         generateValue: true
+    disks:
+      - name: db-storage
+        mountPath: /var/data/dbs
