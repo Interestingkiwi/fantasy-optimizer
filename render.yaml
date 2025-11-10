@@ -5,7 +5,7 @@
 services:
   # 1. Your existing Web Service
   - type: web
-    name: fantasystreams
+    name: fantasy-optimizer
     env: python
     plan: free
     branch: main
