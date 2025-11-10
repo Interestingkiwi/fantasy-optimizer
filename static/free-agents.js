@@ -6,6 +6,7 @@
     const checkboxesContainer = document.getElementById('category-checkboxes-container');
     const positionFiltersContainer = document.getElementById('position-filters-container');
     const dayFiltersContainer = document.getElementById('day-filters-container');
+    const injuryFiltersContainer = document.getElementById('injury-filters-container');
     const recalculateButton = document.getElementById('recalculate-button');
     const unusedRosterSpotsContainer = document.getElementById('unused-roster-spots-container');
     const timestampText = document.getElementById('available-players-timestamp-text');
@@ -28,6 +29,7 @@
     let checkedCategories = [];
     let selectedPositions = [];
     let selectedDays = [];
+    let injuryFilters = { hideDTD: true, hideIR: true }
     let currentUnusedSpots = null;
     let currentTeamRoster = [];
     let currentWeekDates = [];
@@ -79,6 +81,7 @@
                 checkedCategories,
                 selectedPositions,
                 selectedDays,
+                injuryFilters: injuryFilters,
                 sortConfig,
                 unusedRosterSpotsHTML: unusedRosterSpotsContainer.innerHTML,
                 unusedRosterSpotsData: currentUnusedSpots,
@@ -115,6 +118,9 @@
             currentWeekDates = cachedState.currentWeekDates || [];
             selectedPositions = cachedState.selectedPositions || [];
             selectedDays = cachedState.selectedDays || [];
+            injuryFilters = cachedState.injuryFilters !== undefined
+                ? cachedState.injuryFilters
+                : { hideDTD: true, hideIR: true };
             return cachedState;
         } catch (error) {
             console.warn("Could not load state from local storage.", error);
@@ -198,6 +204,7 @@
             }
             renderPositionFilters();
             renderDayFilters();
+            renderInjuryFilters();
             // --- NEW: Populate new UI elements ---
             populateDropPlayerDropdown();
             populateTransactionDatePicker(currentWeekDates);
@@ -258,6 +265,20 @@
             });
             positionFiltersContainer.innerHTML = filterHtml;
         }
+    function renderInjuryFilters() {
+            if (!injuryFiltersContainer) return;
+            let filterHtml = `
+                <div classflex items-center mr-4">
+                    <input id="filter-hide-dtd" name="injury-filter" type="checkbox" value="DTD" ${injuryFilters.hideDTD ? 'checked' : ''} class="h-4 w-4 bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 rounded">
+                    <label for="filter-hide-dtd" class="ml-2 text-sm text-gray-300">Hide DTD/O</label>
+                </div>
+                <div class="flex items-center">
+                    <input id="filter-hide-ir" name="injury-filter" type="checkbox" value="IR" ${injuryFilters.hideIR ? 'checked' : ''} class="h-4 w-4 bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 rounded">
+                    <label for="filter-hide-ir" class="ml-2 text-sm text-gray-300">Hide IR</label>
+                </div>
+            `;
+            injuryFiltersContainer.innerHTML = filterHtml;
+        }
 
     function renderDayFilters() {
             const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -277,11 +298,10 @@
     function filterAndSortPlayers() {
             const searchTerm = playerSearchInput.value.toLowerCase();
 
-            // Read selected positions from the checkboxes
-            selectedPositions = Array.from(document.querySelectorAll('#position-filters-container input:checked')).map(cb => cb.value);
-
-            // Read selected days from the checkboxes
-            selectedDays = Array.from(document.querySelectorAll('#day-filters-container input:checked')).map(cb => cb.value);
+            // --- MODIFICATION ---
+            // The global 'selectedPositions' and 'selectedDays' variables are now
+            // updated by the event listeners directly, so we don't need to
+            // re-read the DOM here every time.
 
             const positionFilter = (player) => {
                 // If no positions are selected, show all players
@@ -308,12 +328,32 @@
                 return player.player_name.toLowerCase().includes(searchTerm);
             };
 
-            // Apply all three filters
-            let filteredWaivers = allWaiverPlayers.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p));
+            // --- NEW INJURY FILTER LOGIC ---
+            const injuryFilter = (player) => {
+                const status = player.status; // e.g., "DTD", "O", "IR"
+
+                // If "Hide DTD/O" is checked and player has one of those statuses, filter them out (return false)
+                if (injuryFilters.hideDTD && (status === 'DTD' || status === 'O')) {
+                    return false;
+                }
+
+                // If "Hide IR" is checked and player has one of those statuses, filter them out (return false)
+                if (injuryFilters.hideIR && (status === 'IR' || status === 'IR-NR' || status === 'IR-LT')) {
+                    return false;
+                }
+
+                // Otherwise, keep the player
+                return true;
+            };
+            // --- END NEW INJURY FILTER LOGIC ---
+
+
+            // Apply all four filters
+            let filteredWaivers = allWaiverPlayers.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p) && injuryFilter(p));
             sortPlayers(filteredWaivers, sortConfig.waivers);
             renderPlayerTable('Waiver Players', filteredWaivers, waiverContainer, 'waivers');
 
-            let filteredFreeAgents = allFreeAgents.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p));
+            let filteredFreeAgents = allFreeAgents.filter(p => searchFilter(p) && positionFilter(p) && dayFilter(p) && injuryFilter(p));
             sortPlayers(filteredFreeAgents, sortConfig.freeAgents);
             renderPlayerTable('Free Agents', filteredFreeAgents, freeAgentContainer, 'freeAgents', true);
         }
@@ -396,6 +436,17 @@
                 const isAlreadyAdded = simulatedMoves.some(m => m.added_player.player_id === player.player_id);
                 const checkboxDisabled = isAlreadyAdded ? 'disabled' : '';
 
+                // --- START: Modified status HTML logic for hyperlink ---
+                // Create a clickable link if the player has a status
+                const statusHtml = player.status
+                    ? ` <a href="https://sports.yahoo.com/nhl/players/${player.player_id}/news/"
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           class="text-red-400 ml-1 hover:text-red-300 hover:underline"
+                           title="View player news on Yahoo (opens new tab)">(${player.status})</a>`
+                    : '';
+                // --- END: Modified status HTML logic ---
+
                 // --- NEW LOGIC for This Week Highlighting ---
                 let gamesThisWeekHtml = '';
                 const playerPositions = player.positions ? player.positions.split(',') : [];
@@ -430,7 +481,7 @@
                             <input type="checkbox" name="player-to-add" class="h-4 w-4 bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 rounded"
                                    value="${player.player_id}" data-table="${tableType}" ${checkboxDisabled}>
                         </td>
-                        <td class="px-2 py-2 whitespace-nowrap text-sm font-medium text-gray-300">${player.player_name}</td>
+                        <td class="px-2 py-2 whitespace-nowrap text-sm font-medium text-gray-300">${player.player_name}${statusHtml}</td>
                         <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-300">${player.player_team}</td>
                         <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-300">${player.positions}</td>
                         <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-300">${gamesThisWeekHtml}</td>
@@ -711,17 +762,32 @@
 
         positionFiltersContainer.addEventListener('change', (e) => {
                     if (e.target.name === 'position-filter') {
-                        filterAndSortPlayers(); // This now reads the checkboxes
+                        selectedPositions = Array.from(document.querySelectorAll('#position-filters-container input:checked')).map(cb => cb.value);
+                        filterAndSortPlayers(); // This now reads global state
                         saveStateToCache(); // Save the new state
                     }
                 });
 
         dayFiltersContainer.addEventListener('change', (e) => {
                     if (e.target.name === 'day-filter') {
-                        filterAndSortPlayers(); // This now reads the day checkboxes
+                        selectedDays = Array.from(document.querySelectorAll('#day-filters-container input:checked')).map(cb => cb.value);
+                        filterAndSortPlayers(); // This now reads the global state
                         saveStateToCache(); // Save the new state
                     }
                 });
+
+        if (injuryFiltersContainer) { // Check if the container exists
+                    injuryFiltersContainer.addEventListener('change', (e) => {
+                        if (e.target.name === 'injury-filter') {
+                            // Update the global state object
+                            injuryFilters.hideDTD = document.getElementById('filter-hide-dtd')?.checked || false;
+                            injuryFilters.hideIR = document.getElementById('filter-hide-ir')?.checked || false;
+
+                            filterAndSortPlayers(); // Re-filter players
+                            saveStateToCache();   // Save the new state
+                        }
+                    });
+                }
 
         checkboxesContainer.addEventListener('click', (e) => {
             const setAllCheckboxes = (checkedState) => {
@@ -845,6 +911,7 @@
             renderCategoryCheckboxes();
             renderPositionFilters();
             renderDayFilters();
+            renderInjuryFilters();
             filterAndSortPlayers();
             populateDropPlayerDropdown();
             renderSimulatedMovesLog();
@@ -858,6 +925,7 @@
             setupEventListeners();
             fetchData();
             renderPositionFilters();
+            renderInjuryFilters();
         }
 
         // --- NEW: Add listeners for sim buttons ---
