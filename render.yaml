@@ -25,29 +25,17 @@ services:
       name: db-storage
       mountPath: /var/data/dbs
 
-  # 2. Your existing WEEKLY (Monday) Job
-  - type: cron
-    name: weekly-db-builder
+  # 2. Your NEW Background Worker
+  # This replaces both old cron jobs
+  - type: worker
+    name: scheduler-worker
     env: python
-    schedule: "0 8 * * 1" # Runs at 8:00 UTC on Monday
-    buildCommand: |
-      pip install -r requirements.txt
-      echo "Seeding persistent disk with CSV files..."
-      mkdir -p /var/data/dbs
-      cp -n seed_data/Proj1g.csv /var/data/dbs/Proj1g.csv
-      cp -n seed_data/Proj1s.csv /var/data/dbs/Proj1s.csv
-      cp -n seed_data/Proj2g.csv /var/data/dbs/Proj2g.csv
-      cp -n seed_data/Proj2s.csv /var/data/dbs/Proj2s.csv
-    startCommand: |
-      echo "Starting weekly job..."
-      python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s $YAHOO_CONSUMER_SECRET && \
-      echo "Running create_projection_db.py..." && \
-      python jobs/create_projection_db.py && \
-      echo "Running toi_script.py..." && \
-      python jobs/toi_script.py && \
-      echo "Weekly job finished successfully."
+    plan: starter # Must be on a paid plan to run 24/7
+    branch: main
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python jobs/scheduler.py"
     envVars:
-      # These will need to be set in the Render dashboard
+      # All env vars needed for your jobs
       - key: PYTHON_VERSION
         value: 3.11.4
       - key: LEAGUE_ID
@@ -59,23 +47,5 @@ services:
       - key: YAHOO_AUTH_JSON
         sync: false
     disk:
-      name: db-storage
+      name: db-storage # Attaches the same disk
       mountPath: /var/data/dbs
-
-  # 3. Your NEW DAILY (Tue-Sun) Job
-  - type: cron
-    name: daily-toi-updater
-    env: python
-    schedule: "0 8 * * 0,2-6"
-    # Schedule: "At 08:00 UTC on every day except Monday"
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: |
-      echo "Starting daily TOI-only update..."
-      python jobs/toi_script.py
-      echo "Daily TOI update finished."
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.4
-    disk:
-      name: db-storage
-      mountPath: /var/data/dbs # Must match the same path
