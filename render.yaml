@@ -22,8 +22,8 @@ services:
       - key: FLASK_SECRET_KEY
         generateValue: true
     disk:
-      - name: 
-        mountPath: /var/data/dbs
+      name: db-storage
+      mountPath: /var/data/dbs
 
   # 2. Your existing WEEKLY (Monday) Job
   - type: cron
@@ -59,8 +59,8 @@ services:
       - key: YAHOO_AUTH_JSON
         sync: false
     disk:
-      - name: 
-        mountPath: /var/data/dbs
+      name: db-storage
+      mountPath: /var/data/dbs
 
   # 3. Your NEW DAILY (Tue-Sun) Job
   - type: cron
@@ -77,5 +77,5 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.4
     disk:
-      - name: 
-        mountPath: /var/data/dbs # Must match the same path
+      name: db-storage
+      mountPath: /var/data/dbs # Must match the same path
