@@ -13,6 +13,11 @@ import logging
 import time
 import unicodedata
 from datetime import date, timedelta, datetime
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    import pytz
+    print("WARNING: zoneinfo not found. Falling back to pytz. Please `pip install pytz` if needed.")
 import ast
 
 
@@ -1060,6 +1065,23 @@ def _update_league_transactions(yq, cursor, logger):
 
     # --- MODIFIED ---
     logger.info("Fetching player info...")
+
+    # --- TIMEZONE CORRECTION START ---
+    # Define the UTC timezone and your League's timezone.
+    # 'America/New_York' (Eastern) fits your 11:28 PM example.
+    # Use 'America/Los_Angeles' if you are sure it's Pacific.
+    try:
+        # Python 3.9+
+        from zoneinfo import ZoneInfo
+        UTC_TZ = ZoneInfo("UTC")
+        LEAGUE_TZ = ZoneInfo("America/New_York")
+    except ImportError:
+        # Fallback for Python < 3.9 (requires `pip install pytz`)
+        import pytz
+        UTC_TZ = pytz.utc
+        LEAGUE_TZ = pytz.timezone("America/New_York")
+    # --- TIMEZONE CORRECTION END ---
+
     try:
         transactions = yq.get_league_transactions()
         transaction_data_to_insert = []
@@ -1068,7 +1090,17 @@ def _update_league_transactions(yq, cursor, logger):
         for transaction in transactions:
             if transaction.status == 'successful':
                 timestamp_epoch = transaction.timestamp
-                transaction_date = datetime.fromtimestamp(timestamp_epoch).strftime('%Y-%m-%d')
+
+                # --- TIMEZONE CORRECTION START ---
+                # 1. Create a datetime object from epoch, aware it's in UTC
+                utc_time = datetime.fromtimestamp(timestamp_epoch, tz=UTC_TZ)
+
+                # 2. Convert the UTC time to the league's local timezone
+                local_time = utc_time.astimezone(LEAGUE_TZ)
+
+                # 3. Extract the date *from the local time*
+                transaction_date = local_time.strftime('%Y-%m-%d')
+                # --- TIMEZONE CORRECTION END ---
 
                 for player_obj in transaction.players:
                     player_id = player_obj.player_id
