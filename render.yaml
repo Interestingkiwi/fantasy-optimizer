@@ -24,6 +24,7 @@ services:
     disk:
       name: db-storage
       mountPath: /var/data/dbs
+      sizeGB: 1
 
   # 2. Your NEW Background Worker
   # This replaces both old cron jobs
@@ -49,3 +50,4 @@ services:
     disk:
       name: db-storage # Attaches the same disk
       mountPath: /var/data/dbs
+      sizeGB: 1

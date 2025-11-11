@@ -5,3 +5,5 @@ yfpy>=2.0
 python-dotenv>=0.19
 requests-oauthlib
 gevent
+yahoo_fantasy_api>=2.0
+apscheduler
