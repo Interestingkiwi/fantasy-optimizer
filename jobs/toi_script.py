@@ -40,6 +40,14 @@ def setup_database():
             end_date TEXT
         )
         ''')
+        #Add Team Data Table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_standings (
+            team_tricode TEXT PRIMARY KEY,
+            point_pct TEXT,
+            goals_against_per_game REAL
+        )
+        ''')
         conn.commit()
         print(f"Database '{DB_FILE}' and table 'powerplay_stats' are set up.")
     except sqlite3.Error as e:
@@ -598,9 +606,165 @@ def join_special_teams_data():
 # --- END NEW FUNCTION ---
 
 
+def fetch_team_standings():
+    """
+    Fetches the current team standings, clears the 'team_standings' table,
+    and inserts the new data.
+    """
+    print("\n--- Fetching Team Standings ---")
+
+    # 1. Get today's date for the API URL
+    today_str = date.today().strftime("%Y-%m-%d")
+    API_URL = f"https://api-web.nhle.com/v1/standings/{today_str}"
+
+    all_standings_data = []
+
+    # 2. Fetch data from the API
+    try:
+        response = requests.get(API_URL)
+        response.raise_for_status()  # Raise an error for bad responses
+
+        data = response.json()
+        standings_list = data.get("standings", [])
+
+        if not standings_list:
+            print("  No standings data found in API response.")
+            return
+
+        # 3. Process the data
+        for team in standings_list:
+            team_tricode = team.get("teamAbbrev", {}).get("default")
+            point_pct_raw = team.get("pointPctg")
+
+            # --- MODIFIED SECTION ---
+            goals_against = team.get("goalAgainst")
+            games_played = team.get("gamesPlayed")
+
+            ga_per_game = None
+            # Check for valid data and games_played > 0 to avoid ZeroDivisionError
+            if isinstance(goals_against, (int, float)) and isinstance(games_played, int) and games_played > 0:
+                ga_per_game = round(goals_against / games_played, 2)
+            # --- END MODIFIED SECTION ---
+
+            # Format point_pct
+            point_pct_formatted = None
+            if isinstance(point_pct_raw, (int, float)):
+                # Format to 3 decimal places (e.g., "0.794")
+                formatted_str = f"{point_pct_raw:.3f}"
+                # Lop off the leading "0" to get ".794"
+                if formatted_str.startswith("0"):
+                    point_pct_formatted = formatted_str[1:]
+                else:
+                    # Handle cases like 1.000
+                    point_pct_formatted = formatted_str
+
+            if team_tricode:
+                all_standings_data.append((
+                    team_tricode,
+                    point_pct_formatted,
+                    ga_per_game  # --- MODIFIED ---
+                ))
+
+    except requests.exceptions.RequestException as e:
+        print(f"  Error fetching team standings from {API_URL}: {e}")
+        return # Stop execution if API call fails
+    except Exception as e:
+        print(f"  An error occurred processing standings data: {e}")
+        return
+
+    # 4. Write data to SQLite database
+    conn = None
+    if not all_standings_data:
+        print("  No processed standings data to write.")
+        return
+
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        # Clear the table first
+        print(f"  Clearing 'team_standings' table...")
+        cursor.execute("DELETE FROM team_standings")
+
+        # Insert all new data
+        print(f"  Inserting {len(all_standings_data)} new team records...")
+        # --- MODIFIED ---
+        cursor.executemany('''
+        INSERT INTO team_standings (team_tricode, point_pct, goals_against_per_game)
+        VALUES (?, ?, ?)
+        ''', all_standings_data)
+        # --- END MODIFIED ---
+
+        conn.commit()
+        print("  Successfully updated 'team_standings' table.")
+
+    except sqlite3.Error as e:
+        print(f"  An error occurred while writing to 'team_standings': {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def copy_standings_to_projections():
+    """
+    Copies the 'team_standings' table from special_teams.db
+    into projections.db as a new, separate table.
+    """
+    print("\n--- Copying 'team_standings' table to projections.db ---")
+    conn = None
+    try:
+        # 1. Connect to the MAIN projections.db
+        conn = sqlite3.connect(PROJECTIONS_DB_FILE)
+        cursor = conn.cursor()
+
+        # 2. Attach the special_teams.db
+        print(f"  Attaching Special Teams DB: {DB_FILE}")
+        cursor.execute(f"ATTACH DATABASE '{DB_FILE}' AS special_teams_db")
+
+        # 3. Load 'team_standings' data from special_teams.db into a DataFrame
+        print("  Reading 'team_standings' from special_teams_db...")
+        df_standings = pd.read_sql_query("SELECT * FROM special_teams_db.team_standings", conn)
+
+        if df_standings.empty:
+            print("  Warning: 'team_standings' in special_teams.db is empty. An empty table will be created.")
+
+        # 4. Write this DataFrame to a new table in projections.db
+        print(f"  Writing {len(df_standings)} records to 'team_standings' table in {PROJECTIONS_DB_FILE}...")
+
+        # --- MODIFIED ---
+        df_standings.to_sql('team_standings',
+                            conn,
+                            if_exists='replace',
+                            index=False,
+                            dtype={'team_tricode': 'TEXT', 'point_pct': 'TEXT', 'goals_against_per_game': 'REAL'})
+        # --- END MODIFIED ---
+
+        # 5. Detach the special_teams.db
+        cursor.execute("DETACH DATABASE special_teams_db")
+
+        # 6. Commit changes to projections.db
+        conn.commit()
+        print("  Successfully copied 'team_standings' table and detached DB.")
+
+    except sqlite3.OperationalError as e:
+        print(f"SQL Error: {e}", file=sys.stderr)
+        print(f"Please ensure '{PROJECTIONS_DB_FILE}' and '{DB_FILE}' exist.", file=sys.stderr)
+        try:
+            cursor.execute("DETACH DATABASE special_teams_db")
+        except: pass
+    except Exception as e:
+        print(f"An error occurred during table copy: {e}", file=sys.stderr)
+        try:
+            cursor.execute("DETACH DATABASE special_teams_db")
+        except: pass
+    finally:
+        if conn:
+            conn.close()
+
+
 if __name__ == "__main__":
     setup_database() # Creates special_teams.db if needed
-
+    fetch_team_standings()
     # Run the main data fetch and processing
     new_data_fetched = fetch_daily_pp_stats()
 
@@ -618,5 +782,6 @@ if __name__ == "__main__":
 
     # Join the new summary data into projections.db
     join_special_teams_data()
+    copy_standings_to_projections()
 
     print("\n--- Daily TOI Script Finished ---")
