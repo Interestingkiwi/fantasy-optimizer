@@ -34,7 +34,7 @@ services:
     plan: starter # Must be on a paid plan to run 24/7
     branch: main
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "python jobs/scheduler.py"
+    startCommand: "python worker.py"
     envVars:
       # All env vars needed for your jobs
       - key: PYTHON_VERSION
