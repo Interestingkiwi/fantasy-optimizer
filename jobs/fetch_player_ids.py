@@ -13,6 +13,8 @@ import sys
 import sqlite3
 import unicodedata
 import re
+import json
+import shutil
 from dotenv import load_dotenv
 from datetime import date
 from yfpy.query import YahooFantasySportsQuery
@@ -67,6 +69,33 @@ def initialize_yahoo_query(league_id, consumer_key, consumer_secret):
     """
     logger.debug("Initializing Yahoo query")
 
+    # --- NEW: Bootstrap token from Render Secret File ---
+    SECRET_TOKEN_PATH = "/etc/secrets/token.json"
+    PERSISTENT_TOKEN_PATH = os.path.join(MOUNT_PATH, "token.json")
+
+    try:
+        # Ensure the persistent disk directory exists
+        os.makedirs(MOUNT_PATH, exist_ok=True)
+
+        # If the token doesn't exist on the persistent disk...
+        if not os.path.exists(PERSISTENT_TOKEN_PATH):
+            logger.info(f"Persistent token not found at {PERSISTENT_TOKEN_PATH}.")
+            # ...check if the Secret File *does* exist.
+            if os.path.exists(SECRET_TOKEN_PATH):
+                logger.info(f"Secret File token found at {SECRET_TOKEN_PATH}. Copying to persistent disk...")
+                # Copy it to the persistent disk for this and all future runs.
+                shutil.copy2(SECRET_TOKEN_PATH, PERSISTENT_TOKEN_PATH)
+                logger.info(f"Successfully copied secret token to {PERSISTENT_TOKEN_PATH}.")
+            else:
+                # This will happen if you run locally without the secret file
+                logger.warning(f"No persistent token OR secret file token found. Proceeding with new auth.")
+        else:
+            logger.info(f"Persistent token found at {PERSISTENT_TOKEN_PATH}. No copy needed.")
+    except Exception as e:
+        logger.error(f"Error during token bootstrap logic: {e}")
+    # --- END NEW LOGIC ---
+
+
     # --- RENDER-SPECIFIC LOGIC ---
     original_cwd = os.getcwd()
     try:
@@ -79,7 +108,7 @@ def initialize_yahoo_query(league_id, consumer_key, consumer_secret):
         return None
     # --- END RENDER-SPECIFIC LOGIC ---
 
-    # Define the token file path (now relative to the new CWD)
+    # Define the token file path (now relative to the new CWD, i.e., /var/data/dbs/token.json)
     token_file_path = "token.json"
     logger.info(f"Checking for token at: {os.path.join(MOUNT_PATH, token_file_path)}")
 
@@ -108,6 +137,8 @@ def initialize_yahoo_query(league_id, consumer_key, consumer_secret):
 
     else:
         logger.info("token.json not found. Will start new auth flow.")
+        # This will now only happen if the Secret File was *also* not found
+        # and the script will (correctly) fail in the Render shell.
 
     try:
         yq = YahooFantasySportsQuery(
