@@ -30,7 +30,11 @@ import copy
 from queue import Queue
 import threading
 import tempfile
-from pathlib import Path
+from google.cloud import storage
+import redis
+from rq import Queue
+
+
 
 # --- Flask App Configuration ---
 # Assume a 'data' directory exists for storing database files
@@ -172,6 +176,15 @@ def get_yfa_lg_instance():
             os.remove(temp_file_path)
 
 
+storage_client = storage.Client()
+gcs_bucket_name = os.environ.get('GCS_BUCKET_NAME')
+if gcs_bucket_name:
+    gcs_bucket = storage_client.bucket(gcs_bucket_name)
+else:
+    logging.warning("GCS_BUCKET_NAME not set. DB downloading will fail.")
+    gcs_bucket = None
+
+
 def get_db_connection_for_league(league_id):
     """Finds and connects to the league's database. Uses a test DB if configured."""
     if session.get('use_test_db'):
@@ -193,21 +206,62 @@ def get_db_connection_for_league(league_id):
         return None, "League ID not found in session."
 
     db_filename = None
-    for filename in os.listdir(DATA_DIR):
-        if filename.startswith(f"yahoo-{league_id}-") and filename.endswith(".db"):
-            db_filename = filename
-            break
+    league_name = "[Unknown]"
 
-    if not db_filename:
-        return None, "Database file not found. Please initialize it on the 'League Database' page."
 
-    db_path = os.path.join(DATA_DIR, db_filename)
+    if not gcs_bucket:
+        return None, "GCS is not configured on the server."
+
+    db_filename_prefix = f'yahoo-{league_id}-'
+    remote_path_prefix = f'league-dbs/{db_filename_prefix}'
+
+    logger.info(f"Searching GCS bucket for: {remote_path_prefix}")
+
+    blob_to_download = None
+    for blob in gcs_bucket.list_blobs(prefix=remote_path_prefix):
+        # We found it. This assumes only one DB per league.
+        blob_to_download = blob
+        db_filename = blob.name.split('/')[-1]
+        break
+
+    if not blob_to_download or not db_filename:
+        return None, "Database file not found in cloud storage. Please run a build."
+
+    # --- [END NEW LOGIC] ---
+
+    # This is the path on the *web service's* persistent disk
+    local_db_path = os.path.join(DATA_DIR, db_filename)
+
     try:
-        conn = sqlite3.connect(db_path)
+        # Check if we need to download it
+        should_download = False
+        if not os.path.exists(local_db_path):
+            should_download = True
+            logger.info(f"No local copy of {db_filename}, downloading...")
+        else:
+            # We have a local copy, check if GCS is newer
+            local_mtime = os.path.getmtime(local_db_path)
+            # Make GCS update time timezone-aware
+            remote_mtime = blob_to_download.updated.timestamp()
+
+            if remote_mtime > local_mtime:
+                should_download = True
+                logger.info(f"Cloud copy of {db_filename} is newer, downloading...")
+
+        if should_download:
+            logger.info(f"Downloading {blob_to_download.name} to {local_db_path}...")
+            # Ensure the /var/data/dbs (DATA_DIR) exists on the web service
+            os.makedirs(DATA_DIR, exist_ok=True)
+            blob_to_download.download_to_filename(local_db_path)
+            logger.info("Download complete.")
+
+        # Now, connect to the local file
+        conn = sqlite3.connect(local_db_path)
         conn.row_factory = sqlite3.Row
         return conn, None
+
     except Exception as e:
-        logging.error(f"Error connecting to DB at {db_path}: {e}")
+        logging.error(f"Error connecting to or downloading DB at {local_db_path}: {e}", exc_info=True)
         return None, "Could not connect to the database."
 
 
@@ -3148,10 +3202,11 @@ def db_status():
     })
 
 
-# --- MODIFIED: This entire route is corrected ---
+redis_conn = redis.from_url(os.environ.get('REDIS_URL'))
+job_queue = Queue('default', connection=redis_conn)
+
 @app.route('/api/db_action', methods=['POST'])
 def db_action():
-    # --- FIX 1: Check for 'yahoo_token' (from /callback) not 'oauth_token' ---
     if not session.get('yahoo_token'):
         return jsonify({'error': 'Not authenticated'}), 401
 
@@ -3161,32 +3216,32 @@ def db_action():
 
     global db_build_status
     with db_build_status_lock:
-        if db_build_status["running"]:
-            # --- MODIFICATION: Return the active build_id to allow other sessions to listen ---
-            return jsonify({
-                'error': 'A build is already in progress.',
-                'build_id': db_build_status.get("current_build_id") # Send the active ID
-            }), 409
-            # --- END MODIFICATION ---
+        # A more robust check: ask Redis if a job is running
+        active_job = db_build_status.get("current_build_id")
+        if active_job:
+            try:
+                job = job_queue.fetch_job(active_job)
+                if job and job.get_status() not in ['finished', 'failed']:
+                    return jsonify({
+                        'error': 'A build is already in progress.',
+                        'build_id': active_job
+                    }), 409
+            except:
+                logger.warning(f"Could not fetch job {active_job}, proceeding.")
 
-        # --- Create session-specific build items ---
         build_id = str(uuid.uuid4())
-        # --- MODIFICATION: Use ephemeral temp directory ---
+        # Log path on the *worker*
         log_file_path = os.path.join(tempfile.gettempdir(), f"{build_id}.log")
-        # --- END MODIFICATION ---
 
-        # --- MODIFICATION: Store the new build_id in the global status ---
         db_build_status = {"running": True, "error": None, "current_build_id": build_id}
-        # --- END MODIFICATION ---
 
     data = request.get_json()
     options = {
         'capture_lineups': data.get('capture_lineups', False),
-        'skip_static': data.get('skip_static', False), # From your HTML
-        'skip_players': data.get('skip_players', False) # From your HTML
+        'skip_static': data.get('skip_static', False),
+        'skip_players': data.get('skip_players', False)
     }
 
-    # --- FIX 2: Get all session data *before* starting the thread ---
     thread_data = {
         "league_id": league_id,
         "token": session.get('yahoo_token'),
@@ -3194,177 +3249,22 @@ def db_action():
         "consumer_secret": session.get('consumer_secret'),
         "dev_mode": session.get('dev_mode', False)
     }
-    # --- End FIX 2 ---
 
-    # --- MODIFICATION: Use file-based logging, not Queues ---
-    def run_task(build_id, log_file_path, options, data):
-        global db_build_status  # <-- Your existing global fix
+    try:
+        logger.info(f"Enqueuing job {build_id} to db_builder.run_task")
+        job = job_queue.enqueue(
+            'db_builder.run_task', # Assumes run_task is now in db_builder.py
+            args=(build_id, log_file_path, options, thread_data),
+            job_id=build_id,
+            job_timeout=1800 # 30 min timeout
+        )
+        return jsonify({'success': True, 'build_id': job.id})
 
-        # --- Create a temporary logger FOR THIS THREAD ONLY ---
-        logger = logging.getLogger(f"db_build_{build_id}")
-        logger.setLevel(logging.INFO)
-        logger.propagate = False  # IMPORTANT: Do not send to root logger
-
-        file_handler = None
-        try:
-            file_handler = logging.FileHandler(log_file_path, mode='w', encoding='utf-8')
-            file_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(message)s')
-            file_handler.setFormatter(formatter)
-            if not logger.handlers:
-                logger.addHandler(file_handler)
-
-            # --- [START NEW LOGS] ---
-            # This will be the VERY FIRST message the user sees.
-            logger.info(f"Build task {build_id} received. Preparing API connections...")
-            # --- [END NEW LOGS] ---
-
-        except Exception as e:
-            # ... (rest of your exception handling) ...
-            logging.error(f"Failed to create FileHandler for build {build_id}: {e}")
-            with db_build_status_lock:
-                db_build_status = {"running": False, "error": str(e), "current_build_id": None}
-            return
-        # --- END NEW LOGGER SETUP ---
-
-        yq = None
-        lg = None
-
-        try:
-            # --- FIX 3: Instantiate API objects *inside* the thread ---
-            if not data.get('dev_mode'):
-
-                # --- [START NEW LOGS] ---
-                logger.info("Authenticating with Yahoo API (yfpy)...")
-                # --- [END NEW LOGS] ---
-
-                # 3a. Create yfpy (yq) instance
-                auth_data = {
-                    'consumer_key': data['consumer_key'],
-                    'consumer_secret': data['consumer_secret'],
-                    'access_token': data['token'].get('access_token'),
-                    'refresh_token': data['token'].get('refresh_token'),
-                    'token_type': data['token'].get('token_type', 'bearer'),
-                    'token_time': data['token'].get('expires_at', time.time() + 3600),
-                    'guid': data['token'].get('xoauth_yahoo_guid')
-                }
-                yq = YahooFantasySportsQuery(
-                    data['league_id'],
-                    game_code="nhl",
-                    yahoo_access_token_json=auth_data
-                )
-
-                # --- [START NEW LOGS] ---
-                logger.info("yfpy authentication successful.")
-                logger.info("Authenticating with Yahoo API (yfa)...")
-                # --- [END NEW LOGS] ---
-
-                # 3b. Create yfa (lg) instance
-                # ... (creds dict setup) ...
-                creds = {
-                    "consumer_key": data['consumer_key'],
-                    "consumer_secret": data['consumer_secret'],
-                    "access_token": data['token'].get('access_token'),
-                    "refresh_token": data['token'].get('refresh_token'),
-                    "token_type": data['token'].get('token_type', 'bearer'),
-                    "token_time": data['token'].get('expires_at', time.time() + 3600),
-                    "xoauth_yahoo_guid": data['token'].get('xoauth_yahoo_guid')
-                }
-                # ... (temp file setup) ...
-                temp_dir = os.path.join(tempfile.gettempdir(), 'temp_creds')
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_file_path = os.path.join(temp_dir, f"thread_{build_id}.json")
-
-                with open(temp_file_path, 'w') as f:
-                    json.dump(creds, f)
-
-                sc = OAuth2(None, None, from_file=temp_file_path)
-                if not sc.token_is_valid():
-                    # --- [START NEW LOGS] ---
-                    # This is the most likely culprit for the long delay!
-                    logger.info("Thread token expired, refreshing... (This may take a moment)")
-                    # --- [END NEW LOGS] ---
-                    sc.refresh_access_token()
-
-                gm = yfa.Game(sc, 'nhl')
-                lg = gm.to_league(f"nhl.l.{data['league_id']}")
-
-                # --- [START NEW LOGS] ---
-                logger.info("yfa authentication successful.")
-                # --- [END NEW LOGS] ---
-
-                if os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
-
-            else:
-                logger.info("Dev mode: Skipping real API object creation in thread.")
-                yq = None
-                lg = None
-
-            # This message now comes *after* the API calls are done.
-            logger.info("--- Starting Database Update ---")
-            logger.info(f"League ID: {data['league_id']}")
-            logger.info(f"Build ID: {build_id}")
-
-            # --- FIX 4: Call the correct function from db_builder.py ---
-            # And pass the new logger to it.
-            result = db_builder.update_league_db(
-                yq,
-                lg,
-                data['league_id'],
-                DATA_DIR, # Pass the data directory
-                logger, # Pass the new logger
-                capture_lineups=options['capture_lineups']
-                # Note: I am using the function from your db_builder.py file,
-                # which does not include skip_static or skip_players.
-                # If you re-add those to league-database.html, you must
-                # add them here and to update_league_db in db_builder.py
-            )
-            # --- END FIX 4 ---
-
-            if result and result.get('success'):
-                logger.info(f"--- SUCCESS: {result.get('league_name')} updated. ---")
-            else:
-                error_msg = result.get('error', 'Unknown error')
-                logger.error(f"--- ERROR: {error_msg} ---")
-                with db_build_status_lock:
-                    db_build_status["error"] = error_msg
-
-        except Exception as e:
-            error_str = f"--- FATAL ERROR: {str(e)} ---"
-            logger.error(error_str, exc_info=True)
-            with db_build_status_lock:
-                db_build_status["error"] = str(e)
-        finally:
-            with db_build_status_lock:
-                # --- MODIFICATION: Reset the whole status object ---
-                error_msg = db_build_status.get("error") # Preserve error if one was set
-                db_build_status["running"] = False
-                db_build_status["error"] = error_msg
-                db_build_status["current_build_id"] = None
-                # --- END MODIFICATION ---
-
-            try:
-                # --- MODIFICATION: Create a .done file as a sentinel ---
-                done_file_path = f"{log_file_path}.done"
-                Path(done_file_path).touch()
-                # --- END MODIFICATION ---
-            except Exception as e:
-                logger.error(f"Build task {build_id} couldn't create .done file: {e}")
-
-            # --- MODIFICATION: Close the file handler ---
-            if file_handler:
-                file_handler.close()
-                logger.removeHandler(file_handler)
-            # --- END MODIFICATION ---
-
-            logger.info(f"Build task {build_id} thread finished.")
-
-    # --- Start thread with new thread_data arg ---
-    threading.Thread(target=run_task, args=(build_id, log_file_path, options, thread_data)).start()
-
-    return jsonify({'success': True, 'build_id': build_id})
-# --- END MODIFIED ROUTE ---
+    except Exception as e:
+        logger.error(f"Failed to enqueue job: {e}", exc_info=True)
+        with db_build_status_lock:
+            db_build_status = {"running": False, "error": str(e), "current_build_id": None}
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/db_log_stream')
@@ -3373,51 +3273,40 @@ def db_log_stream():
     if not build_id:
         return Response("data: ERROR: No build_id provided.\n\ndata: __DONE__\n\n", mimetype='text/event-stream')
 
-    # --- MODIFICATION: Check for log files in temp dir ---
-    log_file_path = os.path.join(tempfile.gettempdir(), f"{build_id}.log")
-    done_file_path = f"{log_file_path}.done"
-
-    if not os.path.exists(log_file_path):
-        # This can happen due to a (new) race condition where the log stream
-        # request arrives before the build thread has created the file.
-        # We'll give it a moment.
-        time.sleep(1)
-        if not os.path.exists(log_file_path):
-            return Response(f"data: ERROR: Invalid build ID {build_id}. It may be complete or never existed.\n\ndata: __DONE__\n\n", mimetype='text/event-stream')
-    # --- END MODIFICATION ---
-
     def generate():
-        # --- MODIFICATION: This entire function tails the log file ---
         try:
-            with open(log_file_path, 'r', encoding='utf-8') as f:
-                while True:
-                    line = f.readline()
-                    if line:
-                        yield f"data: {line.strip()}\n\n"
-                    elif os.path.exists(done_file_path):
-                        # Done file exists, send final sentinel and break
-                        yield 'data: __DONE__\n\n'
-                        break
-                    else:
-                        # No new line, but not done. Wait and try again.
-                        time.sleep(0.5)
+            job = job_queue.fetch_job(build_id)
+            if not job:
+                yield f"data: ERROR: Job {build_id} not found in queue.\n\n"
+                yield 'data: __DONE__\n\n'
+                return
+
+            yield f"data: Job {build_id} found. Waiting for worker...\n\n"
+
+            while True:
+                job.refresh()
+                status = job.get_status()
+
+                if status == 'queued':
+                    yield "data: Job is in the queue, waiting for a worker...\n\n"
+                elif status == 'started':
+                    yield "data: Job is running...\n\n"
+                elif status == 'finished':
+                    yield "data: Job finished successfully.\n\n"
+                    yield "data: __DONE__\n\n"
+                    break
+                elif status == 'failed':
+                    yield "data: --- JOB FAILED ---\n\n"
+                    yield f"data: ERROR: {job.exc_info}\n\n"
+                    yield "data: __DONE__\n\n"
+                    break
+
+                time.sleep(2) # Poll every 2 seconds
+
         except Exception as e:
             logging.error(f"Error in log stream generator for {build_id}: {e}")
             yield f"data: ERROR: Log stream failed. {e}\n\n"
             yield 'data: __DONE__\n\n'
-        finally:
-            # --- NEW: Cleanup logic ---
-            # This block runs when the loop breaks (on __DONE__)
-            # or if the client disconnects.
-            try:
-                if os.path.exists(log_file_path):
-                    os.remove(log_file_path)
-                if os.path.exists(done_file_path):
-                    os.remove(done_file_path)
-                logging.info(f"Log stream {build_id} disconnected and files were cleaned up.")
-            except Exception as e:
-                logging.error(f"Failed to clean up log files for {build_id}: {e}")
-            # --- END NEW ---
 
     return Response(generate(), mimetype='text/event-stream')
 

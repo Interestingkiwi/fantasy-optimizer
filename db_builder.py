@@ -19,6 +19,174 @@ except ImportError:
     import pytz
     print("WARNING: zoneinfo not found. Falling back to pytz. Please `pip install pytz` if needed.")
 import ast
+from google.cloud import storage
+
+
+def run_task(build_id, log_file_path, options, data):
+    global db_build_status  # <-- Your existing global fix
+
+    # --- Create a temporary logger FOR THIS THREAD ONLY ---
+    logger = logging.getLogger(f"db_build_{build_id}")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False  # IMPORTANT: Do not send to root logger
+
+    file_handler = None
+    try:
+        file_handler = logging.FileHandler(log_file_path, mode='w', encoding='utf-8')
+        file_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(message)s')
+        file_handler.setFormatter(formatter)
+        if not logger.handlers:
+            logger.addHandler(file_handler)
+
+        # --- [START NEW LOGS] ---
+        # This will be the VERY FIRST message the user sees.
+        logger.info(f"Build task {build_id} received. Preparing API connections...")
+        # --- [END NEW LOGS] ---
+
+    except Exception as e:
+        # ... (rest of your exception handling) ...
+        logging.error(f"Failed to create FileHandler for build {build_id}: {e}")
+        with db_build_status_lock:
+            db_build_status = {"running": False, "error": str(e), "current_build_id": None}
+        return
+    # --- END NEW LOGGER SETUP ---
+
+    yq = None
+    lg = None
+
+    try:
+        # --- FIX 3: Instantiate API objects *inside* the thread ---
+        if not data.get('dev_mode'):
+
+            # --- [START NEW LOGS] ---
+            logger.info("Authenticating with Yahoo API (yfpy)...")
+            # --- [END NEW LOGS] ---
+
+            # 3a. Create yfpy (yq) instance
+            auth_data = {
+                'consumer_key': data['consumer_key'],
+                'consumer_secret': data['consumer_secret'],
+                'access_token': data['token'].get('access_token'),
+                'refresh_token': data['token'].get('refresh_token'),
+                'token_type': data['token'].get('token_type', 'bearer'),
+                'token_time': data['token'].get('expires_at', time.time() + 3600),
+                'guid': data['token'].get('xoauth_yahoo_guid')
+            }
+            yq = YahooFantasySportsQuery(
+                data['league_id'],
+                game_code="nhl",
+                yahoo_access_token_json=auth_data
+            )
+
+            # --- [START NEW LOGS] ---
+            logger.info("yfpy authentication successful.")
+            logger.info("Authenticating with Yahoo API (yfa)...")
+            # --- [END NEW LOGS] ---
+
+            # 3b. Create yfa (lg) instance
+            # ... (creds dict setup) ...
+            creds = {
+                "consumer_key": data['consumer_key'],
+                "consumer_secret": data['consumer_secret'],
+                "access_token": data['token'].get('access_token'),
+                "refresh_token": data['token'].get('refresh_token'),
+                "token_type": data['token'].get('token_type', 'bearer'),
+                "token_time": data['token'].get('expires_at', time.time() + 3600),
+                "xoauth_yahoo_guid": data['token'].get('xoauth_yahoo_guid')
+            }
+            # ... (temp file setup) ...
+            temp_dir = os.path.join(tempfile.gettempdir(), 'temp_creds')
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_file_path = os.path.join(temp_dir, f"thread_{build_id}.json")
+
+            with open(temp_file_path, 'w') as f:
+                json.dump(creds, f)
+
+            sc = OAuth2(None, None, from_file=temp_file_path)
+            if not sc.token_is_valid():
+                # --- [START NEW LOGS] ---
+                # This is the most likely culprit for the long delay!
+                logger.info("Thread token expired, refreshing... (This may take a moment)")
+                # --- [END NEW LOGS] ---
+                sc.refresh_access_token()
+
+            gm = yfa.Game(sc, 'nhl')
+            lg = gm.to_league(f"nhl.l.{data['league_id']}")
+
+            # --- [START NEW LOGS] ---
+            logger.info("yfa authentication successful.")
+            # --- [END NEW LOGS] ---
+
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+
+        else:
+            logger.info("Dev mode: Skipping real API object creation in thread.")
+            yq = None
+            lg = None
+
+        # This message now comes *after* the API calls are done.
+        logger.info("--- Starting Database Update ---")
+        logger.info(f"League ID: {data['league_id']}")
+        logger.info(f"Build ID: {build_id}")
+
+        # --- FIX 4: Call the correct function from db_builder.py ---
+        # And pass the new logger to it.
+        DATA_DIR = '/var/data/dbs'
+
+        result = update_league_db(
+            yq,
+            lg,
+            data['league_id'],
+            DATA_DIR, # Pass the data directory
+            logger, # Pass the new logger
+            capture_lineups=options['capture_lineups']
+            # Note: I am using the function from your db_builder.py file,
+            # which does not include skip_static or skip_players.
+            # If you re-add those to league-database.html, you must
+            # add them here and to update_league_db in db_builder.py
+        )
+        # --- END FIX 4 ---
+
+        if result and result.get('success'):
+            logger.info(f"--- SUCCESS: {result.get('league_name')} updated. ---")
+        else:
+            error_msg = result.get('error', 'Unknown error')
+            logger.error(f"--- ERROR: {error_msg} ---")
+            with db_build_status_lock:
+                db_build_status["error"] = error_msg
+
+    except Exception as e:
+        error_str = f"--- FATAL ERROR: {str(e)} ---"
+        logger.error(error_str, exc_info=True)
+        with db_build_status_lock:
+            db_build_status["error"] = str(e)
+    finally:
+        with db_build_status_lock:
+            # --- MODIFICATION: Reset the whole status object ---
+            error_msg = db_build_status.get("error") # Preserve error if one was set
+            db_build_status["running"] = False
+            db_build_status["error"] = error_msg
+            db_build_status["current_build_id"] = None
+            # --- END MODIFICATION ---
+
+        try:
+            # --- MODIFICATION: Create a .done file as a sentinel ---
+            done_file_path = f"{log_file_path}.done"
+            Path(done_file_path).touch()
+            # --- END MODIFICATION ---
+        except Exception as e:
+            logger.error(f"Build task {build_id} couldn't create .done file: {e}")
+
+        # --- MODIFICATION: Close the file handler ---
+        if file_handler:
+            file_handler.close()
+            logger.removeHandler(file_handler)
+        # --- END MODIFICATION ---
+
+        logger.info(f"Build task {build_id} thread finished.")
+
 
 
 # --- DB Finalizer Class (from finalize_db.py) ---
@@ -1344,6 +1512,7 @@ def update_league_db(yq, lg, league_id, data_dir, logger, capture_lineups=False)
         sanitized_name = re.sub(r'[\\/*?:"<>|]', "", league_name_str)
         db_filename = f"yahoo-{league_id}-{sanitized_name}.db"
         db_path = os.path.join(data_dir, db_filename)
+        logger.info(f"Database will be built at: {db_path}")
 
         if capture_lineups:
             # --- MODIFIED ---
@@ -1405,10 +1574,12 @@ def update_league_db(yq, lg, league_id, data_dir, logger, capture_lineups=False)
         # --- DB Finalization ---
         # --- MODIFIED ---
         logger.info("--- Starting Database Finalization Process ---")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        SERVER_DIR = os.path.join(script_dir, 'server')
-        PLAYER_IDS_DB_PATH = os.path.join(SERVER_DIR, 'yahoo_player_ids.db')
-        PROJECTIONS_DB_PATH = os.path.join(SERVER_DIR, 'projections.db')
+
+        PLAYER_IDS_DB_PATH = os.path.join(data_dir, 'yahoo_player_ids.db')
+        PROJECTIONS_DB_PATH = os.path.join(data_dir, 'projections.db')
+
+        logger.info(f"Using Player IDs DB from: {PLAYER_IDS_DB_PATH}")
+        logger.info(f"Using Projections DB from: {PROJECTIONS_DB_PATH}")
 
         # --- MODIFIED: Pass logger ---
         finalizer = DBFinalizer(db_path, logger)
@@ -1425,6 +1596,28 @@ def update_league_db(yq, lg, league_id, data_dir, logger, capture_lineups=False)
 
         # --- MODIFIED ---
         logger.info("--- Database Finalization Process Complete ---")
+
+        logger.info("Uploading finalized database to Google Cloud Storage...")
+        try:
+            # This uses the GOOGLE_APPLICATION_CREDENTIALS secret file automatically
+            storage_client = storage.Client()
+            bucket_name = os.environ.get('GCS_BUCKET_NAME')
+            if not bucket_name:
+                raise Exception("GCS_BUCKET_NAME environment variable not set.")
+
+            bucket = storage_client.bucket(bucket_name)
+
+            # This is the "path" inside your GCS bucket
+            remote_db_path = f'league-dbs/{db_filename}'
+            blob = bucket.blob(remote_db_path)
+
+            blob.upload_from_filename(db_path)
+            logger.info(f"Successfully uploaded {db_filename} to GCS bucket {bucket_name} at {remote_db_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to upload to GCS: {e}", exc_info=True)
+            return {'success': False, 'error': f"DB built but failed to upload: {e}"}
+
         timestamp = os.path.getmtime(db_path)
         # --- MODIFIED ---
         logger.info(f"Database for '{sanitized_name}' updated successfully.")
