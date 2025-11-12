@@ -3198,6 +3198,8 @@ def db_action():
 
     # --- MODIFICATION: Use file-based logging, not Queues ---
     def run_task(build_id, log_file_path, options, data):
+        global db_build_status  # <-- Your existing global fix
+
         # --- Create a temporary logger FOR THIS THREAD ONLY ---
         logger = logging.getLogger(f"db_build_{build_id}")
         logger.setLevel(logging.INFO)
@@ -3211,8 +3213,14 @@ def db_action():
             file_handler.setFormatter(formatter)
             if not logger.handlers:
                 logger.addHandler(file_handler)
+
+            # --- [START NEW LOGS] ---
+            # This will be the VERY FIRST message the user sees.
+            logger.info(f"Build task {build_id} received. Preparing API connections...")
+            # --- [END NEW LOGS] ---
+
         except Exception as e:
-            # If we can't even create the log file, just log to console and exit
+            # ... (rest of your exception handling) ...
             logging.error(f"Failed to create FileHandler for build {build_id}: {e}")
             with db_build_status_lock:
                 db_build_status = {"running": False, "error": str(e), "current_build_id": None}
@@ -3225,6 +3233,11 @@ def db_action():
         try:
             # --- FIX 3: Instantiate API objects *inside* the thread ---
             if not data.get('dev_mode'):
+
+                # --- [START NEW LOGS] ---
+                logger.info("Authenticating with Yahoo API (yfpy)...")
+                # --- [END NEW LOGS] ---
+
                 # 3a. Create yfpy (yq) instance
                 auth_data = {
                     'consumer_key': data['consumer_key'],
@@ -3241,8 +3254,13 @@ def db_action():
                     yahoo_access_token_json=auth_data
                 )
 
+                # --- [START NEW LOGS] ---
+                logger.info("yfpy authentication successful.")
+                logger.info("Authenticating with Yahoo API (yfa)...")
+                # --- [END NEW LOGS] ---
+
                 # 3b. Create yfa (lg) instance
-                # We must create a new temp file for this thread
+                # ... (creds dict setup) ...
                 creds = {
                     "consumer_key": data['consumer_key'],
                     "consumer_secret": data['consumer_secret'],
@@ -3252,9 +3270,8 @@ def db_action():
                     "token_time": data['token'].get('expires_at', time.time() + 3600),
                     "xoauth_yahoo_guid": data['token'].get('xoauth_yahoo_guid')
                 }
-                # --- MODIFICATION: Use ephemeral temp directory ---
+                # ... (temp file setup) ...
                 temp_dir = os.path.join(tempfile.gettempdir(), 'temp_creds')
-                # --- END MODIFICATION ---
                 os.makedirs(temp_dir, exist_ok=True)
                 temp_file_path = os.path.join(temp_dir, f"thread_{build_id}.json")
 
@@ -3263,21 +3280,28 @@ def db_action():
 
                 sc = OAuth2(None, None, from_file=temp_file_path)
                 if not sc.token_is_valid():
-                    logger.info("Thread token expired, refreshing...")
+                    # --- [START NEW LOGS] ---
+                    # This is the most likely culprit for the long delay!
+                    logger.info("Thread token expired, refreshing... (This may take a moment)")
+                    # --- [END NEW LOGS] ---
                     sc.refresh_access_token()
 
                 gm = yfa.Game(sc, 'nhl')
                 lg = gm.to_league(f"nhl.l.{data['league_id']}")
+
+                # --- [START NEW LOGS] ---
+                logger.info("yfa authentication successful.")
+                # --- [END NEW LOGS] ---
 
                 if os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 
             else:
                 logger.info("Dev mode: Skipping real API object creation in thread.")
-                # You might need mock objects here if db_builder fails without them
                 yq = None
                 lg = None
 
+            # This message now comes *after* the API calls are done.
             logger.info("--- Starting Database Update ---")
             logger.info(f"League ID: {data['league_id']}")
             logger.info(f"Build ID: {build_id}")
@@ -3315,7 +3339,9 @@ def db_action():
             with db_build_status_lock:
                 # --- MODIFICATION: Reset the whole status object ---
                 error_msg = db_build_status.get("error") # Preserve error if one was set
-                db_build_status = {"running": False, "error": error_msg, "current_build_id": None}
+                db_build_status["running"] = False
+                db_build_status["error"] = error_msg
+                db_build_status["current_build_id"] = None
                 # --- END MODIFICATION ---
 
             try:
