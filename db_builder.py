@@ -209,23 +209,25 @@ class DBFinalizer:
         """)
         self.con.commit() # Commit table creation if it happened
 
-        # --- OPTIMIZATION START ---
+        # --- OPTIMIZATION START / MODIFICATION ---
         # Find the last date already processed in daily_player_stats
         cursor.execute("SELECT MAX(date_) FROM daily_player_stats")
         max_processed_date_result = cursor.fetchone()
         last_processed_date = max_processed_date_result[0] if max_processed_date_result else None
+        today_iso = date.today().isoformat() # Get today's date
 
         # Determine the query and parameters for fetching unprocessed data
         if last_processed_date:
             # --- MODIFIED ---
-            self.logger.info(f"Parsing daily stats: Resuming from date after {last_processed_date}")
-            dump_query = "SELECT * FROM daily_lineups_dump WHERE date_ > ?"
-            query_params = (last_processed_date,)
+            self.logger.info(f"Parsing daily stats: Resuming from date after {last_processed_date} AND re-processing {today_iso}.")
+            dump_query = "SELECT * FROM daily_lineups_dump WHERE date_ > ? OR date_ = ?"
+            query_params = (last_processed_date, today_iso)
         else:
             # --- MODIFIED ---
             self.logger.info("Parsing daily stats: Processing all dates from dump table.")
             dump_query = "SELECT * FROM daily_lineups_dump"
             query_params = ()
+        # --- END MODIFICATION ---
 
         # Fetch only the necessary data from the dump table
         cursor.execute(dump_query, query_params)
@@ -320,10 +322,10 @@ class DBFinalizer:
 
         if stats_to_insert:
             # --- MODIFIED ---
-            self.logger.info(f"Found {len(stats_to_insert)} individual stat entries to insert/ignore into daily_player_stats.")
-            # Use INSERT OR REPLACE if you want updates, INSERT OR IGNORE if you only want new ones
+            self.logger.info(f"Found {len(stats_to_insert)} individual stat entries to insert/replace into daily_player_stats.")
+            # --- MODIFICATION: Use INSERT OR REPLACE ---
             cursor.executemany("""
-                INSERT OR IGNORE INTO daily_player_stats (
+                INSERT OR REPLACE INTO daily_player_stats (
                     date_, team_id, player_id, player_name_normalized, lineup_pos,
                     stat_id, category, stat_value
                 )
@@ -331,7 +333,7 @@ class DBFinalizer:
             """, stats_to_insert)
             self.con.commit()
             # --- MODIFIED ---
-            self.logger.info("Successfully stored/ignored parsed player stats in daily_player_stats.")
+            self.logger.info("Successfully stored/replaced parsed player stats in daily_player_stats.")
         else:
             # --- MODIFIED ---
             self.logger.info("No new player stats to insert into daily_player_stats.")
@@ -373,23 +375,25 @@ class DBFinalizer:
         """)
         self.con.commit() # Commit table creation if it happened
 
-        # --- OPTIMIZATION START ---
+        # --- OPTIMIZATION START / MODIFICATION ---
         # Find the last date already processed in daily_bench_stats
         cursor.execute("SELECT MAX(date_) FROM daily_bench_stats")
         max_processed_date_result = cursor.fetchone()
         last_processed_date = max_processed_date_result[0] if max_processed_date_result else None
+        today_iso = date.today().isoformat() # Get today's date
 
         # Determine the query and parameters for fetching unprocessed data
         if last_processed_date:
             # --- MODIFIED ---
-            self.logger.info(f"Parsing bench stats: Resuming from date after {last_processed_date}")
-            dump_query = "SELECT * FROM daily_lineups_dump WHERE date_ > ?"
-            query_params = (last_processed_date,)
+            self.logger.info(f"Parsing bench stats: Resuming from date after {last_processed_date} AND re-processing {today_iso}.")
+            dump_query = "SELECT * FROM daily_lineups_dump WHERE date_ > ? OR date_ = ?"
+            query_params = (last_processed_date, today_iso)
         else:
             # --- MODIFIED ---
             self.logger.info("Parsing bench stats: Processing all dates from dump table.")
             dump_query = "SELECT * FROM daily_lineups_dump"
             query_params = ()
+        # --- END MODIFICATION ---
 
         # Fetch only the necessary data from the dump table
         cursor.execute(dump_query, query_params)
@@ -486,10 +490,10 @@ class DBFinalizer:
 
         if stats_to_insert:
             # --- MODIFIED ---
-            self.logger.info(f"Found {len(stats_to_insert)} individual bench stat entries to insert/ignore into daily_bench_stats.")
-            # Use INSERT OR REPLACE if you want updates, INSERT OR IGNORE if you only want new ones
+            self.logger.info(f"Found {len(stats_to_insert)} individual bench stat entries to insert/replace into daily_bench_stats.")
+            # --- MODIFICATION: Use INSERT OR REPLACE ---
             cursor.executemany("""
-                INSERT OR IGNORE INTO daily_bench_stats (
+                INSERT OR REPLACE INTO daily_bench_stats (
                     date_, team_id, player_id, player_name_normalized, lineup_pos,
                     stat_id, category, stat_value
                 )
@@ -497,7 +501,7 @@ class DBFinalizer:
             """, stats_to_insert)
             self.con.commit()
             # --- MODIFIED ---
-            self.logger.info("Successfully stored/ignored parsed bench player stats in daily_bench_stats.")
+            self.logger.info("Successfully stored/replaced parsed bench player stats in daily_bench_stats.")
         else:
             # --- MODIFIED ---
             self.logger.info("No new bench player stats to insert into daily_bench_stats.")
@@ -706,19 +710,34 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
     table. Repeats for each team in the league.
     """
     try:
+        # --- MODIFICATION START ---
         cursor.execute("SELECT MAX(date_) FROM daily_lineups_dump")
         last_fetch_date_str = cursor.fetchone()[0]
+        today_iso = date.today().isoformat()
 
         last_fetch_date_plus_one = None
+        start_date_override = None # New variable to force re-fetch
+
         if last_fetch_date_str:
             last_fetch_date = date.fromisoformat(last_fetch_date_str)
-            last_fetch_date_plus_one = (last_fetch_date + timedelta(days=1)).isoformat()
+
+            # If the last fetch was today, we want to re-fetch today
+            if last_fetch_date_str == today_iso:
+                logger.info(f"Last fetch was today ({today_iso}). Setting start date to re-fetch today.")
+                start_date_override = today_iso
+            else:
+                last_fetch_date_plus_one = (last_fetch_date + timedelta(days=1)).isoformat()
+        # --- MODIFICATION END ---
 
         if is_full_mode:
             start_date_for_fetch = league_start_date
-            if last_fetch_date_plus_one:
+            # --- MODIFICATION START ---
+            if start_date_override:
+                start_date_for_fetch = start_date_override
+            elif last_fetch_date_plus_one:
+            # --- MODIFICATION END ---
                     start_date_for_fetch = last_fetch_date_plus_one
-            if last_fetch_date_str:
+            if last_fetch_date_str and not start_date_override: # Don't log resume if we're overriding
                 # --- MODIFIED ---
                 logger.info(f"Capture Daily Lineups is CHECKED. Resuming full history fetch from {start_date_for_fetch}.")
             else:
@@ -731,7 +750,12 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
             start_of_week_minus_one_obj = current_week_start_obj - timedelta(days=1)
             start_of_week_minus_one_str = start_of_week_minus_one_obj.isoformat()
 
-            if last_fetch_date_plus_one:
+            # --- MODIFICATION START ---
+            if start_date_override:
+                start_date_for_fetch = start_date_override
+                logger.info(f"Capture Daily Lineups is UNCHECKED. Re-fetching today's date: {start_date_for_fetch}.")
+            elif last_fetch_date_plus_one:
+            # --- MODIFICATION END ---
                 start_date_for_fetch = max(start_of_week_minus_one_str, last_fetch_date_plus_one)
                 # --- MODIFIED ---
                 logger.info(f"Capture Daily Lineups is UNCHECKED. Resuming from more recent of week start-1 ({start_of_week_minus_one_str}) or last fetch+1 ({last_fetch_date_plus_one}): {start_date_for_fetch}.")
@@ -742,7 +766,8 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
 
 
         team_id = 1
-        stop_date = date.today().isoformat()
+        # --- MODIFICATION: Change stop_date to include today ---
+        stop_date = (date.today() + timedelta(days=1)).isoformat()
         lineup_data_to_insert = []
 
         if start_date_for_fetch >= stop_date:
@@ -752,6 +777,7 @@ def _update_daily_lineups(yq, cursor, conn, num_teams, league_start_date, is_ful
 
         while team_id <= num_teams:
             current_date = start_date_for_fetch
+            # --- MODIFICATION: Loop condition will now include today ---
             while current_date < stop_date:
                 # --- MODIFIED ---
                 logger.info(f"Fetching daily lineups for team {team_id}, for {current_date}...")
