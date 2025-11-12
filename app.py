@@ -186,7 +186,10 @@ else:
 
 
 def get_db_connection_for_league(league_id):
-    """Finds and connects to the league's database. Uses a test DB if configured."""
+    """
+    Finds the league's database, downloads it from GCS if it's newer,
+    and connects to the local copy.
+    """
     if session.get('use_test_db'):
         logging.info(f"Using test database: {TEST_DB_PATH}")
         if not os.path.exists(TEST_DB_PATH):
@@ -205,21 +208,22 @@ def get_db_connection_for_league(league_id):
     if not league_id:
         return None, "League ID not found in session."
 
-    db_filename = None
-    league_name = "[Unknown]"
-
-
     if not gcs_bucket:
+        # --- MODIFIED: Use logging ---
+        logging.error("GCS_BUCKET_NAME not set or GCS client failed to init.")
+        # --- END MODIFIED ---
         return None, "GCS is not configured on the server."
 
     db_filename_prefix = f'yahoo-{league_id}-'
     remote_path_prefix = f'league-dbs/{db_filename_prefix}'
 
-    logger.info(f"Searching GCS bucket for: {remote_path_prefix}")
+    # --- MODIFIED: Use logging ---
+    logging.info(f"Searching GCS bucket for: {remote_path_prefix}")
+    # --- END MODIFIED ---
 
     blob_to_download = None
+    db_filename = None
     for blob in gcs_bucket.list_blobs(prefix=remote_path_prefix):
-        # We found it. This assumes only one DB per league.
         blob_to_download = blob
         db_filename = blob.name.split('/')[-1]
         break
@@ -227,41 +231,43 @@ def get_db_connection_for_league(league_id):
     if not blob_to_download or not db_filename:
         return None, "Database file not found in cloud storage. Please run a build."
 
-    # --- [END NEW LOGIC] ---
-
-    # This is the path on the *web service's* persistent disk
     local_db_path = os.path.join(DATA_DIR, db_filename)
 
     try:
-        # Check if we need to download it
         should_download = False
         if not os.path.exists(local_db_path):
             should_download = True
-            logger.info(f"No local copy of {db_filename}, downloading...")
+            # --- MODIFIED: Use logging ---
+            logging.info(f"No local copy of {db_filename}, downloading...")
+            # --- END MODIFIED ---
         else:
-            # We have a local copy, check if GCS is newer
             local_mtime = os.path.getmtime(local_db_path)
-            # Make GCS update time timezone-aware
             remote_mtime = blob_to_download.updated.timestamp()
 
             if remote_mtime > local_mtime:
                 should_download = True
-                logger.info(f"Cloud copy of {db_filename} is newer, downloading...")
+                # --- MODIFIED: Use logging ---
+                logging.info(f"Cloud copy of {db_filename} is newer, downloading...")
+                # --- END MODIFIED ---
 
         if should_download:
-            logger.info(f"Downloading {blob_to_download.name} to {local_db_path}...")
-            # Ensure the /var/data/dbs (DATA_DIR) exists on the web service
+            # --- MODIFIED: Use logging ---
+            logging.info(f"Downloading {blob_to_download.name} to {local_db_path}...")
+            # --- END MODIFIED ---
             os.makedirs(DATA_DIR, exist_ok=True)
             blob_to_download.download_to_filename(local_db_path)
-            logger.info("Download complete.")
+            # --- MODIFIED: Use logging ---
+            logging.info("Download complete.")
+            # --- END MODIFIED ---
 
-        # Now, connect to the local file
         conn = sqlite3.connect(local_db_path)
         conn.row_factory = sqlite3.Row
         return conn, None
 
     except Exception as e:
+        # --- MODIFIED: Use logging ---
         logging.error(f"Error connecting to or downloading DB at {local_db_path}: {e}", exc_info=True)
+        # --- END MODIFIED ---
         return None, "Could not connect to the database."
 
 
@@ -3216,21 +3222,24 @@ def db_action():
 
     global db_build_status
     with db_build_status_lock:
-        # A more robust check: ask Redis if a job is running
-        active_job = db_build_status.get("current_build_id")
-        if active_job:
+        active_job_id = db_build_status.get("current_build_id")
+        if active_job_id:
             try:
-                job = job_queue.fetch_job(active_job)
-                if job and job.get_status() not in ['finished', 'failed']:
+                job = job_queue.fetch_job(active_job_id)
+                if job and job.get_status() not in ['finished', 'failed', 'canceled']:
+                    # --- MODIFIED: Use logging ---
+                    logging.warning(f"Build {active_job_id} already running with status: {job.get_status()}")
+                    # --- END MODIFIED ---
                     return jsonify({
                         'error': 'A build is already in progress.',
-                        'build_id': active_job
+                        'build_id': active_job_id
                     }), 409
-            except:
-                logger.warning(f"Could not fetch job {active_job}, proceeding.")
+            except Exception as e:
+                # --- MODIFIED: Use logging ---
+                logging.warning(f"Could not fetch job {active_job_id}, proceeding. Error: {e}")
+                # --- END MODIFIED ---
 
         build_id = str(uuid.uuid4())
-        # Log path on the *worker*
         log_file_path = os.path.join(tempfile.gettempdir(), f"{build_id}.log")
 
         db_build_status = {"running": True, "error": None, "current_build_id": build_id}
@@ -3251,17 +3260,21 @@ def db_action():
     }
 
     try:
-        logger.info(f"Enqueuing job {build_id} to db_builder.run_task")
+        # --- MODIFIED: Use logging ---
+        logging.info(f"Enqueuing job {build_id} to db_builder.run_task")
+        # --- END MODIFIED ---
         job = job_queue.enqueue(
-            'db_builder.run_task', # Assumes run_task is now in db_builder.py
+            'db_builder.run_task',
             args=(build_id, log_file_path, options, thread_data),
             job_id=build_id,
-            job_timeout=1800 # 30 min timeout
+            job_timeout=1800
         )
         return jsonify({'success': True, 'build_id': job.id})
 
     except Exception as e:
-        logger.error(f"Failed to enqueue job: {e}", exc_info=True)
+        # --- MODIFIED: Use logging ---
+        logging.error(f"Failed to enqueue job: {e}", exc_info=True)
+        # --- END MODIFIED ---
         with db_build_status_lock:
             db_build_status = {"running": False, "error": str(e), "current_build_id": None}
         return jsonify({'success': False, 'error': str(e)}), 500
