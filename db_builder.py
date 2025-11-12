@@ -20,7 +20,17 @@ except ImportError:
     print("WARNING: zoneinfo not found. Falling back to pytz. Please `pip install pytz` if needed.")
 import ast
 from google.cloud import storage
+import threading
+import json
+import tempfile
+from pathlib import Path
+from yfpy.query import YahooFantasySportsQuery
+import yahoo_fantasy_api as yfa
+from yahoo_oauth import OAuth2
 
+
+db_build_status = {"running": False, "error": None, "current_build_id": None}
+db_build_status_lock = threading.Lock()
 
 def run_task(build_id, log_file_path, options, data):
     global db_build_status  # <-- Your existing global fix
