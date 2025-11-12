@@ -1,12 +1,13 @@
 # Configuration for hosting on Render.com
 # You can connect your GitHub repository and Render will
 # use this file to automatically configure the service.
+
 services:
   # 1. Your existing Web Service
   - type: web
-    name: fantasystreams
+    name: fantasy-optimizer
     env: python
-    plan: free
+    plan: starter
     branch: main
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app -w 4 -k gevent --timeout 120 --graceful-timeout 120"
@@ -20,48 +21,33 @@ services:
         sync: false
       - key: FLASK_SECRET_KEY
         generateValue: true
-    disks:
-      - name: db-storage
-        mountPath: /var/data/dbs
+    disk:
+      name: db-storage
+      mountPath: /var/data/dbs
+      sizeGB: 1
 
-  # 2. Your existing WEEKLY (Monday) Job
-  - type: cron
-    name: weekly-db-builder
+  # 2. Your NEW Background Worker
+  # This replaces both old cron jobs
+  - type: worker
+    name: scheduler-worker
     env: python
-    schedule: "0 8 * * 1" # Runs at 8:00 UTC on Monday
-    buildCommand: |
-      pip install -r requirements.txt
-      # ... (seed commands) ...
-    startCommand: |
-      echo "Starting weekly job..."
-      python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s $YAHOO_CONSUMER_SECRET && \
-      echo "Running create_projection_db.py..." && \
-      python jobs/create_projection_db.py && \
-      echo "Running toi_script.py..." && \
-      python jobs/toi_script.py && \
-      echo "Weekly job finished successfully."
-    envVars:
-      # ... (your weekly job env vars) ...
-      - key: YAHOO_AUTH_JSON
-        sync: false
-    disks:
-      - name: db-storage
-        mountPath: /var/data/dbs
-
-  # 3. Your NEW DAILY (Tue-Sun) Job
-  - type: cron
-    name: daily-toi-updater
-    env: python
-    schedule: "0 8 * * 0,2-6"
-    # Schedule: "At 08:00 UTC on every day except Monday"
+    plan: starter # Must be on a paid plan to run 24/7
+    branch: main
     buildCommand: "pip install -r requirements.txt"
-    startCommand: |
-      echo "Starting daily TOI-only update..."
-      python jobs/toi_script.py
-      echo "Daily TOI update finished."
+    startCommand: "python jobs/scheduler.py"
     envVars:
+      # All env vars needed for your jobs
       - key: PYTHON_VERSION
         value: 3.11.4
-    disks:
-      - name: db-storage # Must match the same disk
-        mountPath: /var/data/dbs # Must match the same path
+      - key: LEAGUE_ID
+        sync: false
+      - key: YAHOO_CONSUMER_KEY
+        sync: false
+      - key: YAHOO_CONSUMER_SECRET
+        sync: false
+      - key: YAHOO_AUTH_JSON
+        sync: false
+    disk:
+      name: db-storage # Attaches the same disk
+      mountPath: /var/data/dbs
+      sizeGB: 1
