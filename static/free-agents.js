@@ -73,6 +73,8 @@
     // --- Caching Functions ---
     function saveStateToCache() {
         try {
+            const weekSelect = document.getElementById('week-select');
+            const selectedWeek = weekSelect ? weekSelect.value : null;
             const state = {
                 allWaiverPlayers,
                 allFreeAgents,
@@ -89,7 +91,8 @@
                 currentWeekDates: currentWeekDates,
                 selectedTeam: document.getElementById('your-team-select')?.value,
                 searchTerm: playerSearchInput.value,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                selectedWeek: selectedWeek
             };
             localStorage.setItem(CACHE_KEY, JSON.stringify(state));
         } catch (error) {
@@ -113,6 +116,16 @@
                 localStorage.removeItem(CACHE_KEY);
                 return null;
             }
+            const weekSelect = document.getElementById('week-select');
+            const currentSelectedWeek = weekSelect ? weekSelect.value : null;
+
+            // If the dropdown has a week and it doesn't match the cached week, invalidate the cache
+            if (currentSelectedWeek && cachedState.selectedWeek !== currentSelectedWeek) {
+                console.warn("Cache is for a different week. Discarding cache.");
+                localStorage.removeItem(CACHE_KEY);
+                return null;
+            }
+
             currentUnusedSpots = cachedState.unusedRosterSpotsData;
             currentTeamRoster = cachedState.currentTeamRoster || [];
             currentWeekDates = cachedState.currentWeekDates || [];
@@ -164,13 +177,16 @@
         unusedRosterSpotsContainer.innerHTML = '<p class="text-gray-400">Loading unused spots...</p>';
         const yourTeamSelect = document.getElementById('your-team-select');
         const selectedTeam = yourTeamSelect ? yourTeamSelect.value : null;
+        const weekSelect = document.getElementById('week-select');
+        const selectedWeek = weekSelect ? weekSelect.value : null;
 
         try {
             // --- [START] FIX #1 ---
             // Add the global simulatedMoves array to the payload
             const payload = {
                 team_name: selectedTeam,
-                simulated_moves: simulatedMoves
+                simulated_moves: simulatedMoves,
+                selected_week: selectedWeek
             };
             // --- [END] FIX #1 ---
 
@@ -803,6 +819,20 @@
                 setAllCheckboxes(false);
             }
         });
+        const weekSelect = document.getElementById('week-select');
+        if (weekSelect) {
+            weekSelect.addEventListener('change', () => {
+                // Clear the cache and simulation when the week changes
+                localStorage.removeItem(CACHE_KEY);
+                localStorage.removeItem(SIMULATION_KEY);
+                simulatedMoves = []; // Reset simulation on week change
+
+                // Fetch data for the new week, reading current categories
+                const selectedCategories = Array.from(document.querySelectorAll('#category-checkboxes-container input:checked')).map(cb => cb.value);
+                fetchData(selectedCategories);
+            });
+        }
+
 
         const yourTeamSelect = document.getElementById('your-team-select');
         if (yourTeamSelect) {

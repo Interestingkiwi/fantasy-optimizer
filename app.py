@@ -29,7 +29,8 @@ import itertools
 import copy
 from queue import Queue
 import threading
-
+import tempfile
+from pathlib import Path
 
 # --- Flask App Configuration ---
 # Assume a 'data' directory exists for storing database files
@@ -49,7 +50,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 DB_BUILD_QUEUES = {}
 DB_QUEUES_LOCK = threading.Lock() # To safely add/remove from the dict
 
-db_build_status = {"running": False, "error": None}
+db_build_status = {"running": False, "error": None, "current_build_id": None}
 db_build_status_lock = threading.Lock()
 
 # --- Yahoo OAuth2 Settings ---
@@ -137,7 +138,7 @@ def get_yfa_lg_instance():
         "xoauth_yahoo_guid": token.get('xoauth_yahoo_guid')
     }
 
-    temp_dir = os.path.join(DATA_DIR, 'temp_creds')
+    temp_dir = os.path.join(tempfile.gettempdir(), 'temp_creds')
     os.makedirs(temp_dir, exist_ok=True)
     temp_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}.json")
 
@@ -2143,6 +2144,309 @@ def get_category_strengths_data():
         if conn:
             conn.close()
 
+
+@app.route('/api/schedules_page_data')
+def schedules_page_data():
+    """
+    Provides the necessary data to populate the Schedules page.
+    This includes all weeks in the season.
+    """
+    league_id = session.get('league_id')
+    conn, error_msg = get_db_connection_for_league(league_id)
+
+    if not conn:
+        return jsonify({'db_exists': False, 'error': error_msg})
+
+    try:
+        cursor = conn.cursor()
+
+        # Fetch all weeks (as requested for the schedules page)
+        cursor.execute("SELECT week_num, start_date, end_date FROM weeks ORDER BY week_num")
+        weeks = decode_dict_values([dict(row) for row in cursor.fetchall()])
+
+        return jsonify({
+            'db_exists': True,
+            'weeks': weeks
+        })
+
+    except Exception as e:
+        logging.error(f"Error fetching schedules page data: {e}", exc_info=True)
+        return jsonify({'db_exists': False, 'error': f"An error occurred: {e}"}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+TEAM_TRICODES = [
+    "FLA", "CHI", "NYR", "PIT", "LAK", "COL", "TOR", "MTL", "WSH", "BOS",
+    "EDM", "CGY", "VGK", "BUF", "DET", "TBL", "OTT", "PHI", "NYI", "CAR",
+    "NJD", "STL", "MIN", "NSH", "CBJ", "WPG", "DAL", "UTA", "VAN", "SJS",
+    "SEA", "ANA"
+]
+
+@app.route('/api/schedules/off_days', methods=['POST'])
+def schedules_off_days():
+    """
+    Fetches and processes "Off Days" data based on the selected week.
+    """
+    league_id = session.get('league_id')
+    conn, error_msg = get_db_connection_for_league(league_id)
+    if not conn:
+        return jsonify({'error': error_msg}), 500
+
+    try:
+        data = request.get_json()
+        selected_week = data.get('week')
+        cursor = conn.cursor()
+
+        # 1. Fetch data from all three tables (Unchanged)
+        cursor.execute("SELECT off_day_date FROM off_days")
+        off_days_set = set(row['off_day_date'] for row in cursor.fetchall())
+
+        cursor.execute("SELECT week_num, start_date, end_date FROM weeks ORDER BY week_num")
+        weeks = decode_dict_values([dict(row) for row in cursor.fetchall()])
+
+        cursor.execute("SELECT game_date, home_team, away_team FROM schedule")
+        schedule = decode_dict_values([dict(row) for row in cursor.fetchall()])
+
+        # 2. Determine current week (Unchanged)
+        today = date.today().isoformat()
+        cursor.execute("SELECT week_num FROM weeks WHERE start_date <= ? AND end_date >= ?", (today, today))
+        current_week_row = cursor.fetchone()
+        current_week = current_week_row['week_num'] if current_week_row else (weeks[0]['week_num'] if weeks else 1)
+        if not weeks:
+            return jsonify({'error': 'No week data found in database.'}), 500
+
+        # 3. Process the data into a master structure (Unchanged)
+        all_weeks_data = {}
+        for week in weeks:
+            week_num = week['week_num']
+            start_date = week['start_date']
+            end_date = week['end_date']
+            all_weeks_data[week_num] = {team: {'off_days': 0, 'total_games': 0} for team in TEAM_TRICODES}
+
+            week_schedule = [g for g in schedule if start_date <= g['game_date'] <= end_date]
+
+            for game in week_schedule:
+                is_off_day = game['game_date'] in off_days_set
+                teams_in_game = [game['home_team'], game['away_team']]
+
+                for team in teams_in_game:
+                    if team in all_weeks_data[week_num]:
+                        all_weeks_data[week_num][team]['total_games'] += 1
+                        if is_off_day:
+                            all_weeks_data[week_num][team]['off_days'] += 1
+
+        # 4. Format the response based on selected_week
+        if selected_week == 'all':
+            # --- "All Season" logic (Unchanged) ---
+            ros_data = {'headers': [], 'rows': []}
+            past_data = {'headers': [], 'rows': []}
+
+            ros_headers = [f"Week {w['week_num']}" for w in weeks if w['week_num'] >= current_week]
+            past_headers = [f"Week {w['week_num']}" for w in weeks if w['week_num'] < current_week]
+            ros_data['headers'] = ros_headers
+            past_data['headers'] = past_headers
+
+            for team in TEAM_TRICODES:
+                ros_row = {'team': team}
+                past_row = {'team': team}
+                ros_total = 0
+                for week_header in ros_headers:
+                    week_num = int(week_header.split(' ')[1])
+                    off_days_count = all_weeks_data[week_num][team]['off_days']
+                    ros_row[week_header] = off_days_count
+                    ros_total += off_days_count
+                ros_row['Total'] = ros_total
+                for week_header in past_headers:
+                    week_num = int(week_header.split(' ')[1])
+                    past_row[week_header] = all_weeks_data[week_num][team]['off_days']
+                ros_data['rows'].append(ros_row)
+                past_data['rows'].append(past_row)
+
+            return jsonify({
+                'report_type': 'all_season',
+                'ros_data': ros_data,
+                'past_data': past_data
+            })
+
+        else:
+            # --- [START] MODIFIED: Single week logic ---
+            week_num_int = int(selected_week)
+            table_data = []
+            if week_num_int not in all_weeks_data:
+                 return jsonify({'error': f'Data for week {week_num_int} not found.'}), 404
+
+            # Find the correct week's start/end dates
+            selected_week_details = next((w for w in weeks if w['week_num'] == week_num_int), None)
+            if not selected_week_details:
+                 return jsonify({'error': f'Week details for {week_num_int} not found.'}), 404
+
+            start_date = selected_week_details['start_date']
+            end_date = selected_week_details['end_date']
+            week_data = all_weeks_data[week_num_int]
+
+            for team in TEAM_TRICODES:
+                # Find opponents for this team in this week
+                games_this_week = [g for g in schedule if start_date <= g['game_date'] <= end_date and (g['home_team'] == team or g['away_team'] == team)]
+                opponents = []
+                for game in games_this_week:
+                    opponent = game['away_team'] if game['home_team'] == team else game['home_team']
+                    opponents.append(opponent)
+
+                table_data.append({
+                    'team': team,
+                    'off_days': week_data[team]['off_days'],
+                    'total_games': week_data[team]['total_games'],
+                    'opponents': ", ".join(opponents),
+                    'opponent_avg_ga': 'N/A',
+                    'opponent_avg_pt_pct': 'N/A'
+                })
+
+            return jsonify({
+                'report_type': 'single_week',
+                'table_data': table_data
+            })
+            # --- [END] MODIFIED ---
+
+    except Exception as e:
+        logging.error(f"Error fetching schedules/off_days data: {e}", exc_info=True)
+        return jsonify({'error': f"An error occurred: {e}"}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+
+@app.route('/api/schedules/playoff_schedules', methods=['GET'])
+def schedules_playoff_schedules():
+    """
+    Determines the league's playoff weeks and fetches the schedule,
+    off-day games, and opponents for each team during those weeks.
+    """
+    league_id = session.get('league_id')
+    conn, error_msg = get_db_connection_for_league(league_id)
+    if not conn:
+        return jsonify({'error': error_msg}), 500
+
+    try:
+        cursor = conn.cursor()
+
+        # ... (Steps 1-6 are unchanged) ...
+
+        # 1. Get league playoff end date
+        cursor.execute("SELECT value FROM league_info WHERE key = 'end_date'")
+        league_end_date_row = cursor.fetchone()
+        if not league_end_date_row:
+            return jsonify({'error': 'League end_date not found in league_info table.'}), 404
+        league_end_date = league_end_date_row['value']
+
+        # 2. Get max regular season matchup week
+        cursor.execute("SELECT MAX(week) as max_week FROM matchups")
+        max_week_row = cursor.fetchone()
+        if not max_week_row or max_week_row['max_week'] is None:
+            return jsonify({'error': 'No matchup data found to determine playoff start.'}), 404
+        start_playoff_week_num = max_week_row['max_week'] + 1
+
+        # 3. Get all weeks from the database
+        cursor.execute("SELECT week_num, start_date, end_date FROM weeks ORDER BY week_num")
+        all_weeks = decode_dict_values([dict(row) for row in cursor.fetchall()])
+
+        # 4. Filter to find the exact playoff weeks
+        playoff_weeks = []
+        found_start = False
+        for week in all_weeks:
+            if week['week_num'] == start_playoff_week_num:
+                found_start = True
+
+            if found_start:
+                playoff_weeks.append(week)
+                if week['end_date'] == league_end_date:
+                    break
+
+        if not playoff_weeks:
+             return jsonify({
+                 'title': 'Playoff Weeks',
+                 'headers': [],
+                 'rows': []
+            }), 200
+
+        # 5. Get data for schedule and off-days
+        cursor.execute("SELECT off_day_date FROM off_days")
+        off_days_set = set(row['off_day_date'] for row in cursor.fetchall())
+
+        cursor.execute("SELECT game_date, home_team, away_team FROM schedule")
+        schedule = decode_dict_values([dict(row) for row in cursor.fetchall()])
+
+        # 6. Process data for each team for each playoff week
+        team_data = {team: {} for team in TEAM_TRICODES}
+        for team in TEAM_TRICODES:
+            for week in playoff_weeks:
+                week_num = week['week_num']
+                start_date = week['start_date']
+                end_date = week['end_date']
+
+                games_this_week = [g for g in schedule if start_date <= g['game_date'] <= end_date and (g['home_team'] == team or g['away_team'] == team)]
+
+                total_games = len(games_this_week)
+                off_day_games = 0
+                opponents = []
+
+                for game in games_this_week:
+                    if game['game_date'] in off_days_set:
+                        off_day_games += 1
+
+                    opponent = game['away_team'] if game['home_team'] == team else game['home_team']
+                    opponents.append(opponent)
+
+                team_data[team][week_num] = {
+                    'games': total_games,
+                    'off_days': off_day_games,
+                    'opponents': ", ".join(opponents)
+                }
+
+        # --- [START] MODIFICATION ---
+        # 7. Format for the frontend table
+        headers = ['Team']
+        for week in playoff_weeks:
+            week_num = week['week_num']
+            headers.append(f'Week {week_num} Games')
+            # Add week number to headers to make them unique
+            headers.append(f'Week {week_num} Opponents')
+            headers.append(f'Week {week_num} Opponent Avg GA')
+            headers.append(f'Week {week_num} Opponent Avg Pt %')
+
+        rows = []
+        for team in TEAM_TRICODES:
+            row = {'Team': team}
+            for week in playoff_weeks:
+                week_num = week['week_num']
+                data = team_data[team][week_num]
+
+                # Format: "4 (2)"
+                row[f'Week {week_num} Games'] = f"{data['games']} ({data['off_days']})"
+
+                # Use the same unique headers as keys for the row data
+                row[f'Week {week_num} Opponents'] = data['opponents']
+                row[f'Week {week_num} Opponent Avg GA'] = 'N/A'
+                row[f'Week {week_num} Opponent Avg Pt %'] = 'N/A'
+            rows.append(row)
+        # --- [END] MODIFICATION ---
+
+        return jsonify({
+            'title': 'Playoff Weeks',
+            'headers': headers,
+            'rows': rows
+        })
+
+    except Exception as e:
+        logging.error(f"Error fetching schedules/playoff_schedules data: {e}", exc_info=True)
+        return jsonify({'error': f"An error occurred: {e}"}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
 @app.route('/api/roster_data', methods=['POST'])
 def get_roster_data():
     league_id = session.get('league_id')
@@ -2406,19 +2710,41 @@ def get_free_agent_data():
 
         all_cat_rank_columns = [f"{cat}_cat_rank" for cat in all_scoring_categories]
 
-        # Determine current week
-        today = date.today().isoformat()
-        cursor.execute("SELECT week_num FROM weeks WHERE start_date <= ? AND end_date >= ?", (today, today))
-        current_week_row = cursor.fetchone()
-        current_week = current_week_row['week_num'] if current_week_row else 1
+        # --- NEW: Determine target week based on request ---
+        selected_week_str = request_data.get('selected_week') # This might be "1", "2", etc. or None
+        target_week = None
+
+        if selected_week_str:
+            try:
+                target_week = int(selected_week_str)
+                # Check if this week exists in the 'weeks' table
+                cursor.execute("SELECT 1 FROM weeks WHERE week_num = ?", (target_week,))
+                if not cursor.fetchone():
+                    target_week = None # Week doesn't exist, fall back
+                    logging.warn(f"Selected week '{selected_week_str}' not found in database. Falling back to current week.")
+            except ValueError:
+                logging.warn(f"Invalid selected_week value: '{selected_week_str}'. Falling back to current week.")
+
+        if target_week is None:
+            # Fallback logic: Determine current week based on today's date
+            today = date.today().isoformat()
+            cursor.execute("SELECT week_num FROM weeks WHERE start_date <= ? AND end_date >= ?", (today, today))
+            current_week_row = cursor.fetchone()
+            target_week = current_week_row['week_num'] if current_week_row else 1
+            logging.info(f"No valid selected week provided. Using current week: {target_week}")
+        else:
+            logging.info(f"Using selected week: {target_week}")
+        # --- END NEW ---
 
         cursor.execute("SELECT player_id FROM waiver_players")
         waiver_player_ids = [row['player_id'] for row in cursor.fetchall()]
-        waiver_players = _get_ranked_players(cursor, waiver_player_ids, all_cat_rank_columns, current_week)
+        # --- NEW: Use target_week ---
+        waiver_players = _get_ranked_players(cursor, waiver_player_ids, all_cat_rank_columns, target_week)
 
         cursor.execute("SELECT player_id FROM free_agents")
         free_agent_ids = [row['player_id'] for row in cursor.fetchall()]
-        free_agents = _get_ranked_players(cursor, free_agent_ids, all_cat_rank_columns, current_week)
+        # --- NEW: Use target_week ---
+        free_agents = _get_ranked_players(cursor, free_agent_ids, all_cat_rank_columns, target_week)
 
         # Recalculate total_cat_rank based on checked/unchecked categories
         for player_list in [waiver_players, free_agents]:
@@ -2450,7 +2776,8 @@ def get_free_agent_data():
             team_row = cursor.fetchone()
             if team_row:
                 team_id = team_row['team_id']
-                cursor.execute("SELECT start_date, end_date FROM weeks WHERE week_num = ?", (current_week,))
+                # --- NEW: Use target_week ---
+                cursor.execute("SELECT start_date, end_date FROM weeks WHERE week_num = ?", (target_week,))
                 week_dates = cursor.fetchone()
                 if week_dates:
                     start_date_obj = datetime.strptime(week_dates['start_date'], '%Y-%m-%d').date()
@@ -2458,6 +2785,7 @@ def get_free_agent_data():
                     days_in_week = [(start_date_obj + timedelta(days=i)) for i in range((end_date_obj - start_date_obj).days + 1)]
 
                     today_obj = date.today()
+                    # This logic correctly filters for dates from today onwards
                     for day in days_in_week:
                         if day >= today_obj:
                             days_in_week_data.append(day.isoformat())
@@ -2465,7 +2793,8 @@ def get_free_agent_data():
                     cursor.execute("SELECT position, position_count FROM lineup_settings WHERE position NOT IN ('BN', 'IR', 'IR+')")
                     lineup_settings = {row['position']: row['position_count'] for row in cursor.fetchall()}
 
-                    team_ranked_roster = _get_ranked_roster_for_week(cursor, team_id, current_week)
+                    # --- NEW: Use target_week ---
+                    team_ranked_roster = _get_ranked_roster_for_week(cursor, team_id, target_week)
 
                     # --- [START] THE FIX ---
                     # 2. Pass the simulated_moves list to the helper function
@@ -2833,8 +3162,22 @@ def db_action():
     global db_build_status
     with db_build_status_lock:
         if db_build_status["running"]:
-            return jsonify({'error': 'A build is already in progress.'}), 409
-        db_build_status = {"running": True, "error": None}
+            # --- MODIFICATION: Return the active build_id to allow other sessions to listen ---
+            return jsonify({
+                'error': 'A build is already in progress.',
+                'build_id': db_build_status.get("current_build_id") # Send the active ID
+            }), 409
+            # --- END MODIFICATION ---
+
+        # --- Create session-specific build items ---
+        build_id = str(uuid.uuid4())
+        # --- MODIFICATION: Use ephemeral temp directory ---
+        log_file_path = os.path.join(tempfile.gettempdir(), f"{build_id}.log")
+        # --- END MODIFICATION ---
+
+        # --- MODIFICATION: Store the new build_id in the global status ---
+        db_build_status = {"running": True, "error": None, "current_build_id": build_id}
+        # --- END MODIFICATION ---
 
     data = request.get_json()
     options = {
@@ -2853,34 +3196,27 @@ def db_action():
     }
     # --- End FIX 2 ---
 
-    # --- Create session-specific build items ---
-    build_id = str(uuid.uuid4())
-    build_queue = Queue()
-    with DB_QUEUES_LOCK:
-        DB_BUILD_QUEUES[build_id] = build_queue
-
-    def run_task(build_id, build_queue, options, data):
+    # --- MODIFICATION: Use file-based logging, not Queues ---
+    def run_task(build_id, log_file_path, options, data):
         # --- Create a temporary logger FOR THIS THREAD ONLY ---
         logger = logging.getLogger(f"db_build_{build_id}")
         logger.setLevel(logging.INFO)
         logger.propagate = False  # IMPORTANT: Do not send to root logger
 
-        class QueueLogHandler(logging.Handler):
-            def __init__(self, queue):
-                super().__init__()
-                self.queue = queue
-
-            def emit(self, record):
-                log_entry = self.format(record)
-                self.queue.put(f"{log_entry}\n")
-
-        queue_handler = QueueLogHandler(build_queue)
-        queue_handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(message)s')
-        queue_handler.setFormatter(formatter)
-
-        if not logger.handlers:
-            logger.addHandler(queue_handler)
+        file_handler = None
+        try:
+            file_handler = logging.FileHandler(log_file_path, mode='w', encoding='utf-8')
+            file_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(message)s')
+            file_handler.setFormatter(formatter)
+            if not logger.handlers:
+                logger.addHandler(file_handler)
+        except Exception as e:
+            # If we can't even create the log file, just log to console and exit
+            logging.error(f"Failed to create FileHandler for build {build_id}: {e}")
+            with db_build_status_lock:
+                db_build_status = {"running": False, "error": str(e), "current_build_id": None}
+            return
         # --- END NEW LOGGER SETUP ---
 
         yq = None
@@ -2916,7 +3252,9 @@ def db_action():
                     "token_time": data['token'].get('expires_at', time.time() + 3600),
                     "xoauth_yahoo_guid": data['token'].get('xoauth_yahoo_guid')
                 }
-                temp_dir = os.path.join(DATA_DIR, 'temp_creds')
+                # --- MODIFICATION: Use ephemeral temp directory ---
+                temp_dir = os.path.join(tempfile.gettempdir(), 'temp_creds')
+                # --- END MODIFICATION ---
                 os.makedirs(temp_dir, exist_ok=True)
                 temp_file_path = os.path.join(temp_dir, f"thread_{build_id}.json")
 
@@ -2975,25 +3313,29 @@ def db_action():
                 db_build_status["error"] = str(e)
         finally:
             with db_build_status_lock:
-                db_build_status["running"] = False
+                # --- MODIFICATION: Reset the whole status object ---
+                error_msg = db_build_status.get("error") # Preserve error if one was set
+                db_build_status = {"running": False, "error": error_msg, "current_build_id": None}
+                # --- END MODIFICATION ---
 
             try:
-                # Send the 'None' sentinel to tell any listener to stop
-                build_queue.put(None, timeout=5)
+                # --- MODIFICATION: Create a .done file as a sentinel ---
+                done_file_path = f"{log_file_path}.done"
+                Path(done_file_path).touch()
+                # --- END MODIFICATION ---
             except Exception as e:
-                logger.error(f"Build task {build_id} couldn't put sentinel in queue: {e}")
+                logger.error(f"Build task {build_id} couldn't create .done file: {e}")
 
-            # Give the listener a brief moment to receive the sentinel and disconnect
-            time.sleep(1)
+            # --- MODIFICATION: Close the file handler ---
+            if file_handler:
+                file_handler.close()
+                logger.removeHandler(file_handler)
+            # --- END MODIFICATION ---
 
-            # Now, this thread cleans up its own queue from the global dict
-            with DB_QUEUES_LOCK:
-                if build_id in DB_BUILD_QUEUES:
-                    del DB_BUILD_QUEUES[build_id]
-                    logger.info(f"Build task {build_id} cleaned up its own queue.")
+            logger.info(f"Build task {build_id} thread finished.")
 
     # --- Start thread with new thread_data arg ---
-    threading.Thread(target=run_task, args=(build_id, build_queue, options, thread_data)).start()
+    threading.Thread(target=run_task, args=(build_id, log_file_path, options, thread_data)).start()
 
     return jsonify({'success': True, 'build_id': build_id})
 # --- END MODIFIED ROUTE ---
@@ -3005,39 +3347,53 @@ def db_log_stream():
     if not build_id:
         return Response("data: ERROR: No build_id provided.\n\ndata: __DONE__\n\n", mimetype='text/event-stream')
 
-    with DB_QUEUES_LOCK:
-        build_queue = DB_BUILD_QUEUES.get(build_id)
+    # --- MODIFICATION: Check for log files in temp dir ---
+    log_file_path = os.path.join(tempfile.gettempdir(), f"{build_id}.log")
+    done_file_path = f"{log_file_path}.done"
 
-    if not build_queue:
-        return Response(f"data: ERROR: Invalid build ID {build_id}. It may be complete or never existed.\n\ndata: __DONE__\n\n", mimetype='text/event-stream')
+    if not os.path.exists(log_file_path):
+        # This can happen due to a (new) race condition where the log stream
+        # request arrives before the build thread has created the file.
+        # We'll give it a moment.
+        time.sleep(1)
+        if not os.path.exists(log_file_path):
+            return Response(f"data: ERROR: Invalid build ID {build_id}. It may be complete or never existed.\n\ndata: __DONE__\n\n", mimetype='text/event-stream')
+    # --- END MODIFICATION ---
 
     def generate():
-        # The try...finally block is removed.
-        while True:
+        # --- MODIFICATION: This entire function tails the log file ---
+        try:
+            with open(log_file_path, 'r', encoding='utf-8') as f:
+                while True:
+                    line = f.readline()
+                    if line:
+                        yield f"data: {line.strip()}\n\n"
+                    elif os.path.exists(done_file_path):
+                        # Done file exists, send final sentinel and break
+                        yield 'data: __DONE__\n\n'
+                        break
+                    else:
+                        # No new line, but not done. Wait and try again.
+                        time.sleep(0.5)
+        except Exception as e:
+            logging.error(f"Error in log stream generator for {build_id}: {e}")
+            yield f"data: ERROR: Log stream failed. {e}\n\n"
+            yield 'data: __DONE__\n\n'
+        finally:
+            # --- NEW: Cleanup logic ---
+            # This block runs when the loop breaks (on __DONE__)
+            # or if the client disconnects.
             try:
-                message = build_queue.get(timeout=20)
-                if message is None: # The sentinel from run_task
-                    yield 'data: __DONE__\n\n'
-                    break # Exit the loop
-                message = message.strip()
-                yield f"data: {message}\n\n"
-            except: # queue.Empty exception
-                # This keep-alive is fine
-                yield ': keep-alive\n\n'
-
-        # When the loop breaks (or client disconnects), this generator just ends.
-        # It no longer deletes the queue.
-        logging.info(f"Log stream {build_id} disconnected.")
+                if os.path.exists(log_file_path):
+                    os.remove(log_file_path)
+                if os.path.exists(done_file_path):
+                    os.remove(done_file_path)
+                logging.info(f"Log stream {build_id} disconnected and files were cleaned up.")
+            except Exception as e:
+                logging.error(f"Failed to clean up log files for {build_id}: {e}")
+            # --- END NEW ---
 
     return Response(generate(), mimetype='text/event-stream')
-
-
-# --- REMOVING OLD/DUPLICATE DB AND LOG ROUTES ---
-# The routes /stream, /api/update_db, update_db_in_background
-# and the second /api/db_status are all replaced by
-# /api/db_action and /api/db_log_stream and the first /api/db_status
-# --- END REMOVAL ---
-
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):

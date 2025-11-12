@@ -7,12 +7,7 @@
     }
 
     try {
-        // This API endpoint does not exist, so we will show a message.
-        // const response = await fetch('/api/db');
-        // const data = await response.json();
-        // if (data.error) {
-        //     throw new Error(data.error);
-        // }
+
         dbContent.innerHTML = '<p class="text-gray-400"></p>';
 
     } catch (error) {

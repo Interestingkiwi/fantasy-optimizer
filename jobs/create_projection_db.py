@@ -714,7 +714,7 @@ def setup_schedule_tables(cursor, games):
     cursor.execute("DROP TABLE IF EXISTS off_days")
     cursor.execute("CREATE TABLE off_days (off_day_date TEXT PRIMARY KEY)")
     games_per_day = Counter(g['date'] for g in games)
-    off_days = [(day,) for day, count in games_per_day.items() if count * 2 < NHL_TEAM_COUNT]
+    off_days = [(day,) for day, count in games_per_day.items() if count * 4 < NHL_TEAM_COUNT]
     cursor.executemany("INSERT INTO off_days VALUES (?)", sorted(off_days))
     print(f"Table 'off_days' created and populated with {len(off_days)} dates.")
 

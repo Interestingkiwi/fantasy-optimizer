@@ -1,0 +1,28 @@
+<div class="space-y-4">
+    <h2 class="text-xl font-bold text-white flex items-center">
+        NHL Schedule Insights
+        <span class="help-icon" data-title="NHL Schedule Insights Help" data-text="This page provides insight into nhl team schedules and their relevance to fantasy hockey">?</span>
+    </h2>
+
+    <div id="schedule-error-message" class="hidden bg-red-800 text-white p-3 rounded-md"></div>
+
+    <div class="flex flex-wrap gap-4 items-center p-4 bg-gray-800 rounded-lg">
+        <div>
+            <label for="schedule-week-select" class="block text-sm font-medium text-gray-300">Select Week</label>
+            <select id="schedule-week-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
+        </div>
+        <div>
+            <label for="schedule-report-select" class="block text-sm font-medium text-gray-300">Schedule Report</label>
+            <select id="schedule-report-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
+        </div>
+    </div>
+
+    <div id="schedule-content" class="space-y-4">
+        <div id="loading-spinner-schedules" class="hidden text-center">
+            <div class="spinner"></div>
+            <p class="text-gray-300">Loading schedule data...</p>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='schedules.js') }}"></script>
