@@ -29,15 +29,18 @@ from collections import defaultdict, Counter
 
 # --- Constants ---
 MOUNT_PATH = "/var/data/dbs" # Define the persistent storage path
+SEED_DATA_DIR = "seed_data"   # Define the path to your seed data
 
-PROJ1_SKATER_FILE = os.path.join(MOUNT_PATH, 'proj1s.csv')
-PROJ1_GOALIE_FILE = os.path.join(MOUNT_PATH, 'proj1g.csv')
-PROJ2_SKATER_FILE = os.path.join(MOUNT_PATH, 'proj2s.csv')
-PROJ2_GOALIE_FILE = os.path.join(MOUNT_PATH, 'proj2g.csv')
+# --- Source Projection Files (Read-Only) ---
+PROJ1_SKATER_FILE = os.path.join(SEED_DATA_DIR, 'proj1s.csv')
+PROJ1_GOALIE_FILE = os.path.join(SEED_DATA_DIR, 'proj1g.csv')
+PROJ2_SKATER_FILE = os.path.join(SEED_DATA_DIR, 'proj2s.csv')
+PROJ2_GOALIE_FILE = os.path.join(SEED_DATA_DIR, 'proj2g.csv')
 
+# --- Writable Database Files (on Persistent Disk) ---
 DB_FILE = os.path.join(MOUNT_PATH, 'projections.db')
 YAHOO_DB_FILE = os.path.join(MOUNT_PATH, 'yahoo_player_ids.db')
-YAHOO_TABLE_NAME = 'players'    # Assumed table name inside yahoo_player_ids.db
+YAHOO_TABLE_NAME = 'players'
 
 START_DATE = date(2025, 10, 7)
 END_DATE = date(2026, 4, 17)
