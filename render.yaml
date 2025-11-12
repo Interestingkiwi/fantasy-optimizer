@@ -48,19 +48,19 @@ services:
       - key: YAHOO_AUTH_JSON
         sync: false
     disk:
-      name: db-storage # Attaches the same disk
+      name: projection-storage # Attaches the same disk
       mountPath: /var/data/dbs
       sizeGB: 1
 
   - type: cron
     name: weekly-projection-job
     schedule: "0 5 * * 1"  # Runs at 5:00 AM UTC every Monday
-    command: >-
-      python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s $YAHOO_CONSUMER_SECRET &&
-      python jobs/create_projection_db.py &&
-      python jobs/toi_script.py
-    disks:
-      - name: fantasy-dbs  # <-- Use the EXACT same name as your other worker
+    commands: 
+      - python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s    $YAHOO_CONSUMER_SECRET &&
+        python jobs/create_projection_db.py &&
+        python jobs/toi_script.py
+    disk:
+        name: fantasy-dbs  # <-- Use the EXACT same name as your other worker
         mountPath: /var/data/dbs
     envVars:
       - key: LEAGUE_ID
@@ -74,6 +74,6 @@ services:
     name: daily-toi-updater
     schedule: "0 5 * * 0,2-6"  # Runs at 5:00 AM UTC on Tue, Wed, Thu, Fri, Sat, Sun
     command: python jobs/toi_script.py
-    disks:
-      - name: fantasy-dbs  # <-- Use the EXACT same name as your other services
+    disk:
+        name: fantasy-dbs  # <-- Use the EXACT same name as your other services
         mountPath: /var/data/dbs        
