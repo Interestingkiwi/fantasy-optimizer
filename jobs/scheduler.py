@@ -2,7 +2,7 @@ import os
 import sys
 import subprocess
 import logging
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler # <-- CHANGED
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -35,7 +35,7 @@ def run_script(script_path, *args):
 
 def run_daily_job():
     """
-    Runs the daily toi_script.py
+    Runs the daily (Tue-Sun) job: just the toi_script.
     """
     logger.info("Starting daily (Tue-Sun) job: run_daily_job")
     run_script("jobs/toi_script.py")
@@ -60,16 +60,19 @@ def run_weekly_job():
         if run_script("jobs/create_projection_db.py"):
             run_script("jobs/toi_script.py")
 
-if __name__ == "__main__":
-    logger.info("Starting scheduler...")
-    scheduler = BlockingScheduler(timezone="UTC")
+def start_scheduler():
+    """
+    Initializes and starts the non-blocking scheduler.
+    """
+    logger.info("Initializing background scheduler...")
+    scheduler = BackgroundScheduler(timezone="UTC")
 
     # Schedule the weekly (Monday) job
     scheduler.add_job(
         run_weekly_job,
         trigger='cron',
         day_of_week='mon',
-        hour=8,
+        hour=5,  # 5:00 AM UTC
         minute=0
     )
 
@@ -77,12 +80,22 @@ if __name__ == "__main__":
     scheduler.add_job(
         run_daily_job,
         trigger='cron',
-        day_of_week='tue-sun', # Runs on every day *except* Monday
-        hour=8,
+        day_of_week='0,2-6', # Runs on Tue, Wed, Thu, Fri, Sat, Sun
+        hour=5,  # 5:00 AM UTC
         minute=0
     )
 
+    scheduler.start()
+    logger.info("Scheduler started. Waiting for jobs...")
+
+
+if __name__ == "__main__":
+    # This allows you to still test this script directly if needed
+    print("Running scheduler in blocking mode (for testing)...")
+    start_scheduler()
     try:
-        scheduler.start()
+        # Keep the main thread alive
+        while True:
+            time.sleep(60)
     except (KeyboardInterrupt, SystemExit):
         pass

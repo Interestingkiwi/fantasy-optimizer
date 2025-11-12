@@ -55,10 +55,7 @@ services:
   - type: cron
     name: weekly-projection-job
     schedule: "0 5 * * 1"  # Runs at 5:00 AM UTC every Monday
-    commands: 
-      - python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s    $YAHOO_CONSUMER_SECRET &&
-        python jobs/create_projection_db.py &&
-        python jobs/toi_script.py
+    startCommand: python jobs/fetch_player_ids.py $LEAGUE_ID -k $YAHOO_CONSUMER_KEY -s $YAHOO_CONSUMER_SECRET && python jobs/create_projection_db.py && python jobs/toi_script.py
     disk:
         name: fantasy-dbs  # <-- Use the EXACT same name as your other worker
         mountPath: /var/data/dbs
@@ -73,7 +70,7 @@ services:
   - type: cron
     name: daily-toi-updater
     schedule: "0 5 * * 0,2-6"  # Runs at 5:00 AM UTC on Tue, Wed, Thu, Fri, Sat, Sun
-    command: python jobs/toi_script.py
+    startCommand: python jobs/toi_script.py
     disk:
         name: fantasy-dbs  # <-- Use the EXACT same name as your other services
         mountPath: /var/data/dbs        
