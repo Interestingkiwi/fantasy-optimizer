@@ -50,7 +50,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a-strong-dev-secret-key-for-local-testing")
 # Configure root logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-app.register_blueprint(api_v1_blueprint)
+
 
 DB_BUILD_QUEUES = {}
 DB_QUEUES_LOCK = threading.Lock() # To safely add/remove from the dict
@@ -214,6 +214,11 @@ def requires_auth(f):
         # 3. If all checks pass, run the original route function
         return f(*args, **kwargs)
     return decorated_function
+
+
+from api_v1 import api as api_v1_blueprint
+app.register_blueprint(api_v1_blueprint)
+
 
 def get_db_connection_for_league(league_id):
     """
@@ -3411,47 +3416,9 @@ def serve_static(filename):
 
 
 #MOBILE ROUTES
-@app.route('/api/check_league')
-def api_check_league():
-    """
-    Checks if a league database exists in GCS.
-    Called by the Android app.
-    Query Params:
-        id (str): The league ID
-        name (str): The league name
-    """
-    league_id = request.args.get('id')
-    league_name = request.args.get('name')
-
-    if not league_id or not league_name:
-        return jsonify({'error': 'Missing required query parameters: id, name'}), 400
-
-    try:
-        bucket_name = 'fantasystreams-app-data'
-        blob_name = f'league-dbs/yahoo-{league_id}-{league_name}.db'
-
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(blob_name)
-
-        if blob.exists():
-            # The file exists!
-            return jsonify({'exists': True})
-        else:
-            # The file does not exist
-            return jsonify({'exists': False})
-
-    except Exception as e:
-        # Log the error (e.g., print(e))
-        print(f"Error in /api/check_league: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
 
 
-try:
-    from api_v1 import api as api_v1_blueprint
-    app.register_blueprint(api_v1_blueprint)
-    logging.info("Successfully registered APIv1 blueprint")
-except ImportError as e:
-    logging.error(f"Could not import or register API blueprint: {e}", exc_info=True)
+
 
 
 
