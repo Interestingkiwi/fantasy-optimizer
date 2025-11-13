@@ -3451,7 +3451,7 @@ try:
     app.register_blueprint(api_v1_blueprint)
     logging.info("Successfully registered APIv1 blueprint")
 except ImportError as e:
-    logging.error(f"Could not import or register API blueprint: {e}", exc_info=
+    logging.error(f"Could not import or register API blueprint: {e}", exc_info=True)
 
 
 
