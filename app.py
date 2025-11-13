@@ -33,6 +33,7 @@ import tempfile
 from google.cloud import storage
 import redis
 from rq import Queue
+from api_v1 import api as api_v1_blueprint
 
 
 
@@ -50,6 +51,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a-strong-dev-secret-key-for-local-testing")
 # Configure root logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+app.register_blueprint(api_v1_blueprint)
 
 DB_BUILD_QUEUES = {}
 DB_QUEUES_LOCK = threading.Lock() # To safely add/remove from the dict
