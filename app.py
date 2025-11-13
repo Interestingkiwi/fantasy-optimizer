@@ -33,8 +33,7 @@ import tempfile
 from google.cloud import storage
 import redis
 from rq import Queue
-from api_v1 import api as api_v1_blueprint
-
+from functools import wraps
 
 
 # --- Flask App Configuration ---
@@ -186,6 +185,35 @@ else:
     logging.warning("GCS_BUCKET_NAME not set. DB downloading will fail.")
     gcs_bucket = None
 
+
+#MOBILE AUTH HELPER
+def requires_auth(f):
+    """
+    A decorator to protect routes that require a logged-in user.
+    It checks for 'leagues' in the session, which you set after
+    a successful Yahoo login.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # 1. Check if user is logged in (do they have leagues in their session?)
+        if 'leagues' not in session:
+            # Not logged in. Return a 401 Unauthorized error.
+            return jsonify({"error": "Unauthorized"}), 401
+
+        # 2. (Optional but HIGHLY recommended)
+        # Check if the league_id they are asking for is one of their leagues.
+        if 'league_id' in kwargs:
+            requested_league_id = kwargs['league_id']
+            # session['leagues'] stores a list of dicts: [{'league_id': 'id', ...}]
+            user_league_ids = [str(league['league_id']) for league in session['leagues']]
+
+            if requested_league_id not in user_league_ids:
+                # Logged in, but trying to access a league they don't own.
+                return jsonify({"error": "Forbidden"}), 403
+
+        # 3. If all checks pass, run the original route function
+        return f(*args, **kwargs)
+    return decorated_function
 
 def get_db_connection_for_league(league_id):
     """
@@ -3416,6 +3444,15 @@ def api_check_league():
         # Log the error (e.g., print(e))
         print(f"Error in /api/check_league: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+try:
+    from api_v1 import api as api_v1_blueprint
+    app.register_blueprint(api_v1_blueprint)
+    logging.info("Successfully registered APIv1 blueprint")
+except ImportError as e:
+    logging.error(f"Could not import or register API blueprint: {e}", exc_info=
+
 
 
 if __name__ == '__main__':
