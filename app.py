@@ -775,10 +775,18 @@ def mobile_callback():
         session['yahoo_token'] = token
 
         # Get league info
-        sc = OAuth2(consumer_key, consumer_secret, redirect_uri=redirect_uri)
-        sc.token = token
+        auth_data = {
+            'consumer_key': consumer_key,
+            'consumer_secret': consumer_secret,
+            'access_token': token.get('access_token'),
+            'refresh_token': token.get('refresh_token'),
+            'token_type': token.get('token_type', 'bearer'),
+            'token_time': token.get('expires_at', time.time() + token.get('expires_in', 3600)),
+            'guid': token.get('xoauth_yahoo_guid')
+        }
 
-        q = YahooFantasySportsQuery(sc)
+        # Initialize yfpy query *without* a league_id to get user-level data
+        q = YahooFantasySportsQuery(None, game_code="nhl", yahoo_access_token_json=auth_data)
         user_leagues = q.get_user_leagues()
         leagues_data = []
         for league in user_leagues:
