@@ -791,7 +791,7 @@ def mobile_callback():
 
         # Initialize yfpy query *without* a league_id to get user-level data
         q = YahooFantasySportsQuery(None, game_code="nhl", yahoo_access_token_json=auth_data)
-        user_leagues = q.get_user_leagues()
+        user_leagues = q.get_user_leagues_by_game_key(q.game_code)
         leagues_data = []
         for league in user_leagues:
             leagues_data.append({
