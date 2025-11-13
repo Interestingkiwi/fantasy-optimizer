@@ -3379,6 +3379,43 @@ def db_log_stream():
 def serve_static(filename):
     return send_from_directory('static', filename)
 
+
+#MOBILE ROUTES
+@app.route('/api/check_league')
+def api_check_league():
+    """
+    Checks if a league database exists in GCS.
+    Called by the Android app.
+    Query Params:
+        id (str): The league ID
+        name (str): The league name
+    """
+    league_id = request.args.get('id')
+    league_name = request.args.get('name')
+
+    if not league_id or not league_name:
+        return jsonify({'error': 'Missing required query parameters: id, name'}), 400
+
+    try:
+        bucket_name = 'fantasystreams-app-data'
+        blob_name = f'league-dbs/yahoo-{league_id}-{league_name}.db'
+
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        if blob.exists():
+            # The file exists!
+            return jsonify({'exists': True})
+        else:
+            # The file does not exist
+            return jsonify({'exists': False})
+
+    except Exception as e:
+        # Log the error (e.g., print(e))
+        print(f"Error in /api/check_league: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
 if __name__ == '__main__':
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     app.run(debug=True, port=5001)
