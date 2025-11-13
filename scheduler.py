@@ -72,7 +72,7 @@ def start_scheduler():
         run_weekly_job,
         trigger='cron',
         day_of_week='mon',
-        hour=5,  # 5:00 AM UTC
+        hour=6,  # 6:00 AM UTC
         minute=0
     )
 
@@ -81,7 +81,7 @@ def start_scheduler():
         run_daily_job,
         trigger='cron',
         day_of_week='0,2-6', # Runs on Tue, Wed, Thu, Fri, Sat, Sun
-        hour=5,  # 5:00 AM UTC
+        hour=6,  # 6:00 AM UTC
         minute=0
     )
 
