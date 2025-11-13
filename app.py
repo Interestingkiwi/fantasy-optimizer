@@ -796,8 +796,7 @@ def mobile_callback():
         for league in user_leagues:
             leagues_data.append({
                 'league_id': str(league.league_id),
-                'league_name': league.name,
-                'team_key': league.team_key
+                'league_name': league.name
             })
 
         if not leagues_data:
