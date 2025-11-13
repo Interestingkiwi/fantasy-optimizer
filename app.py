@@ -744,8 +744,6 @@ def mobile_login():
         # Use the new /mobile_callback URL
         redirect_uri = url_for('mobile_callback', _external=True, _scheme='https')
 
-        authorization_base_url = 'https://api.login.yahoo.com/oauth2/get_authorization'
-
         yahoo = OAuth2Session(consumer_key, redirect_uri=redirect_uri)
         authorization_url, state = yahoo.authorization_url(authorization_base_url)
 
