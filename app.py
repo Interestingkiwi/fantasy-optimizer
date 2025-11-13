@@ -730,6 +730,90 @@ def callback():
 
     return redirect(url_for('home'))
 
+
+@app.route('/mobile_login', methods=['GET'])
+def mobile_login():
+    """Initiates the Yahoo OAuth2 flow for the mobile WebView."""
+    try:
+        consumer_key = os.environ.get("YAHOO_CONSUMER_KEY")
+        consumer_secret = os.environ.get("YAHOO_CONSUMER_SECRET")
+        if not consumer_key or not consumer_secret:
+            logging.error("YAHOO_CONSUMER_KEY or YAHOO_CONSUMER_SECRET not set.")
+            return "Server is missing auth configuration.", 500
+
+        # Use the new /mobile_callback URL
+        redirect_uri = url_for('mobile_callback', _external=True, _scheme='https')
+
+        authorization_base_url = 'https://api.login.yahoo.com/oauth2/get_authorization'
+
+        yahoo = OAuth2Session(consumer_key, redirect_uri=redirect_uri)
+        authorization_url, state = yahoo.authorization_url(authorization_base_url)
+
+        session['oauth_state'] = state
+
+        # Redirect the WebView to Yahoo
+        return redirect(authorization_url)
+
+    except Exception as e:
+        logging.error(f"Error in /mobile_login: {e}", exc_info=True)
+        return "An error occurred during authentication setup.", 500
+
+# --- [NEW] This is the callback for the MOBILE app's /mobile_login route ---
+@app.route('/mobile_callback', methods=['GET'])
+def mobile_callback():
+    """Handles the OAuth2 callback from Yahoo for the mobile WebView."""
+    try:
+        consumer_key = os.environ.get("YAHOO_CONSUMER_KEY")
+        consumer_secret = os.environ.get("YAHOO_CONSUMER_SECRET")
+        redirect_uri = url_for('mobile_callback', _external=True, _scheme='https')
+
+        yahoo = OAuth2Session(consumer_key, state=session['oauth_state'], redirect_uri=redirect_uri)
+
+        token_url = 'https://api.login.yahoo.com/oauth2/get_token'
+
+        token = yahoo.fetch_token(token_url, client_secret=consumer_secret,
+                                  authorization_response=request.url)
+
+        session['yahoo_token'] = token
+
+        # Get league info
+        sc = OAuth2(consumer_key, consumer_secret, redirect_uri=redirect_uri)
+        sc.token = token
+
+        q = YahooFantasySportsQuery(sc)
+        user_leagues = q.get_user_leagues()
+        leagues_data = []
+        for league in user_leagues:
+            leagues_data.append({
+                'league_id': str(league.league_id),
+                'league_name': league.name,
+                'team_key': league.team_key
+            })
+
+        if not leagues_data:
+            logging.warning("User has no leagues.")
+            return "No fantasy leagues found for this user.", 404
+
+        session['leagues'] = leagues_data
+
+        # Set the default "current" league to the first one
+        default_league = leagues_data[0]
+        session['league_id'] = default_league['league_id']
+
+        logging.info(f"Mobile app user logged in. Found {len(leagues_data)} leagues.")
+
+        # --- KEY FOR MOBILE ---
+        # Redirect to /home and pass league info in query params
+        # This is what MainActivity.kt intercepts
+        return redirect(url_for('home',
+                                league_id=default_league['league_id'],
+                                league_name=default_league['league_name']))
+
+    except Exception as e:
+        logging.error(f"Error in /mobile_callback: {e}", exc_info=True)
+        return "Authentication failed.", 500
+
+
 @app.route('/logout')
 def logout():
     session.clear()
