@@ -769,8 +769,12 @@ def mobile_callback():
 
         token_url = 'https://api.login.yahoo.com/oauth2/get_token'
 
+        # Get the authorization code from the URL parameters
+        code = request.args.get('code')
+
+        # Fetch the token using the code. The 'yahoo' object already knows the redirect_uri.
         token = yahoo.fetch_token(token_url, client_secret=consumer_secret,
-                                  authorization_response=request.url)
+                                  code=code)
 
         session['yahoo_token'] = token
 
