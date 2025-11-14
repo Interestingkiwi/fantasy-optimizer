@@ -2740,8 +2740,11 @@ def get_roster_data():
         active_players = _get_ranked_roster_for_week(cursor, team_id, week_num)
 
         # Get the full player list for display, including IR players
+        # ---
+        # --- THE FIX IS HERE: Added "p.player_id" to the SELECT list ---
+        # ---
         cursor.execute("""
-            SELECT p.player_name, p.player_team as team, rp.eligible_positions, p.player_name_normalized
+            SELECT p.player_id, p.player_name, p.player_team as team, rp.eligible_positions, p.player_name_normalized
             FROM rosters_tall r
             JOIN rostered_players rp ON r.player_id = rp.player_id
             JOIN players p ON rp.player_id = p.player_id
@@ -2903,6 +2906,7 @@ def get_roster_data():
 
         # Add starts count to the final player list
         for player in all_players:
+            # This line now works, because player.get('player_id') is no longer None
             player['starts_this_week'] = player_starts_counter.get(player.get('player_id'), 0)
 
         # --- Calculate Unused Roster Spots ---
@@ -3262,20 +3266,50 @@ def download_db():
     if not league_id:
         return jsonify({'error': 'Not logged in or session expired.'}), 401
 
-    db_filename = None
-    for filename in os.listdir(DATA_DIR):
-        if filename.startswith(f"yahoo-{league_id}-") and filename.endswith(".db"):
-            db_filename = filename
-            break
+    # --- MODIFICATION START: GCS Download Logic ---
+    if not gcs_bucket:
+        logging.error("GCS_BUCKET_NAME not set or GCS client failed to init.")
+        return jsonify({'error': 'GCS is not configured on the server.'}), 500
 
-    if not db_filename:
-        return jsonify({'error': 'Database file not found. Please create it on the "League Database" page first.'}), 404
+    db_filename_prefix = f'yahoo-{league_id}-'
+    remote_path_prefix = f'league-dbs/{db_filename_prefix}'
+
+    logging.info(f"Searching GCS bucket for download: {remote_path_prefix}")
+
+    blob_to_download = None
+    db_filename = None
+    try:
+        # Find the database file in GCS
+        for blob in gcs_bucket.list_blobs(prefix=remote_path_prefix):
+            blob_to_download = blob
+            db_filename = blob.name.split('/')[-1]  # Get the actual filename
+            break  # Found the first match
+    except Exception as e:
+        logging.error(f"Error listing GCS blobs: {e}", exc_info=True)
+        return jsonify({'error': 'Could not search GCS for the file.'}), 500
+
+    if not blob_to_download or not db_filename:
+        logging.warning(f"No DB file found in GCS with prefix: {remote_path_prefix}")
+        return jsonify({'error': 'Database file not found in cloud storage. Please run a build.'}), 404
 
     try:
-        return send_from_directory(DATA_DIR, db_filename, as_attachment=True)
+        logging.info(f"Streaming file {db_filename} from GCS...")
+        # Download the blob's content as bytes
+        file_bytes = blob_to_download.download_as_bytes()
+
+        # Create a Flask Response to stream the file to the user
+        return Response(
+            file_bytes,
+            mimetype='application/octet-stream',  # A generic type for file downloads
+            headers={
+                "Content-Disposition": f"attachment; filename={db_filename}",
+                "Content-Length": len(file_bytes)
+            }
+        )
     except Exception as e:
-        logging.error(f"Error sending database file: {e}", exc_info=True)
-        return jsonify({'error': 'An error occurred while trying to download the file.'}), 500
+        logging.error(f"Error downloading/streaming blob {db_filename}: {e}", exc_info=True)
+        return jsonify({'error': 'An error occurred while trying to download the file from GCS.'}), 500
+    # --- MODIFICATION END ---
 
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
@@ -3476,6 +3510,9 @@ def db_log_stream():
 
             yield f"data: Job {build_id} found. Waiting for worker...\n\n"
 
+            # --- MODIFIED: Added a counter ---
+            running_counter = 0
+
             while True:
                 job.refresh()
                 status = job.get_status()
@@ -3483,7 +3520,9 @@ def db_log_stream():
                 if status == 'queued':
                     yield "data: Job is in the queue, waiting for a worker...\n\n"
                 elif status == 'started':
-                    yield "data: Job is running...\n\n"
+                    # --- MODIFIED: Increment counter and update message ---
+                    running_counter += 1
+                    yield f"data: Job is running... (Check {running_counter})\n\n"
                 elif status == 'finished':
                     yield "data: Job finished successfully.\n\n"
                     yield "data: __DONE__\n\n"
@@ -3494,7 +3533,8 @@ def db_log_stream():
                     yield "data: __DONE__\n\n"
                     break
 
-                time.sleep(2) # Poll every 2 seconds
+                # --- MODIFIED: Slowed down the polling interval ---
+                time.sleep(10)
 
         except Exception as e:
             logging.error(f"Error in log stream generator for {build_id}: {e}")
@@ -3502,11 +3542,6 @@ def db_log_stream():
             yield 'data: __DONE__\n\n'
 
     return Response(generate(), mimetype='text/event-stream')
-
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('static', filename)
-
 
 #MOBILE ROUTES
 
