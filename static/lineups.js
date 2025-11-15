@@ -19,6 +19,37 @@
     let checkedCategories = []; // Store currently checked categories
     let simulatedMoves = []; // NEW
 
+    // --- [START] NEW HELPER FUNCTIONS (from free-agents.js) ---
+    function formatPercentage(decimal) {
+        if (decimal === null || decimal === undefined) return 'N/A';
+        try {
+            const num = parseFloat(decimal);
+            if (isNaN(num)) return 'N/A';
+            return (num * 100).toFixed(1) + '%';
+        } catch (e) {
+            return 'N/A';
+        }
+    }
+
+    function formatSecondsToMMSS(seconds) {
+        if (seconds === null || seconds === undefined) return 'N/A';
+        try {
+            const s = parseInt(seconds, 10);
+            if (isNaN(s)) return 'N/A';
+            const minutes = Math.floor(s / 60);
+            const remainingSeconds = s % 60;
+            return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
+        } catch (e) {
+            return 'N/A';
+        }
+    }
+
+    function formatNullable(value) {
+        return value ?? 'N/A';
+    }
+    // --- [END] NEW HELPER FUNCTIONS ---
+
+
     /**
      * Calculates a color for a heat map based on a player's rank.
      * Lower ranks (closer to 1) are green, higher ranks (closer to 20) are red.
@@ -49,6 +80,30 @@
     }
 
     async function init() {
+        // --- [START] NEW MODAL HTML (from free-agents.js) ---
+        const modalHTML = `
+        <div id="pp-stats-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+            <div class="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-lg relative border border-gray-700">
+                <button id="pp-modal-close" class="absolute top-3 right-3 text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+                <h3 id="pp-modal-title" class="text-xl font-bold text-white mb-4">Player PP Stats</h3>
+                <div id="pp-modal-content" class="text-gray-300">
+                    </div>
+            </div>
+        </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        document.getElementById('pp-modal-close').addEventListener('click', () => {
+            document.getElementById('pp-stats-modal').classList.add('hidden');
+        });
+
+        document.getElementById('pp-stats-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'pp-stats-modal') {
+                document.getElementById('pp-stats-modal').classList.add('hidden');
+            }
+        });
+        // --- [END] NEW MODAL HTML ---
+
         try {
             const response = await fetch('/api/lineup_page_data');
             const data = await response.json();
@@ -161,7 +216,7 @@
             if (allScoringCategories.length === 0) {
                 allScoringCategories = data.scoring_categories;
                 if (localStorage.getItem(CATEGORY_PREF_KEY) === null) {
-                  checkedCategories = data.checked_categories;
+                    checkedCategories = data.checked_categories;
                 }
                 renderCategoryCheckboxes(); // New function
             }
@@ -193,7 +248,7 @@
         for (const dayString in dailyLineups) {
             const lineup = dailyLineups[dayString];
             const dayName = dayString.split(',')[0]; // e.g., "Monday"
-            const dayAbbr = dayAbbrMap[dayName];   // e.g., "Mon"
+            const dayAbbr = dayAbbrMap[dayName];    // e.g., "Mon"
 
             if (dayAbbr) {
                 for (const position in lineup) {
@@ -233,7 +288,11 @@
                             <th scope="col" class="px-2 py-1 text-left text-xs font-bold text-gray-300 uppercase tracking-wider"># Games</th>
                             <th scope="col" class="px-2 py-1 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Starts</th>
                             <th scope="col" class="px-2 py-1 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Next Week</th>
-        `;
+                            <th scope="col" class="px-2 py-1 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">
+                                PP Utilization
+                                <span class="text-xs text-gray-400 font-light block">(Click cell)</span>
+                            </th>
+                            `;
 
         (scoringCategories || []).forEach(cat => {
             tableHtml += `<th scope="col" class="px-2 py-1 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">${cat}</th>`;
@@ -254,16 +313,41 @@
                 return day;
             }).join(', ');
 
+            // --- [START] NEW: Add player status link ---
+            const statusHtml = player.status
+                ? ` <a href="https://sports.yahoo.com/nhl/players/${player.player_id}/news/"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       class="text-red-400 ml-1 hover:text-red-300 hover:underline"
+                       title="View player news on Yahoo (opens new tab)">(${player.status})</a>`
+                : '';
+            // --- [END] NEW ---
+
             tableHtml += `
                 <tr class="hover:bg-gray-700/50">
-                    <td class="px-2 py-1 whitespace-nowrap text-sm font-medium text-gray-300">${player.player_name}</td>
+                    <td class="px-2 py-1 whitespace-nowrap text-sm font-medium text-gray-300">${player.player_name}${statusHtml}</td>
                     <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300">${player.team || player.player_team}</td>
                     <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300">${player.eligible_positions || player.positions}</td>
                     <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300">${gamesThisWeekHtml}</td>
                     <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300">${(player.games_this_week || []).length}</td>
                     <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300">${player.starts_this_week}</td>
                     <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300">${(player.games_next_week || []).join(', ')}</td>
-            `;
+
+                    <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300 cursor-pointer hover:bg-gray-700 pp-util-cell"
+                        data-player-name="${player.player_name}"
+                        data-avg-pp-pct="${player.avg_ppTimeOnIcePctPerGame}"
+                        data-lg-pp-toi="${player.lg_ppTimeOnIce}"
+                        data-lg-pp-pct="${player.lg_ppTimeOnIcePctPerGame}"
+                        data-lg-ppa="${player.lg_ppAssists}"
+                        data-lg-ppg="${player.lg_ppGoals}"
+                        data-lw-pp-toi="${player.avg_ppTimeOnIce}"
+                        data-lw-pp-pct="${player.avg_ppTimeOnIcePctPerGame}"
+                        data-lw-ppa="${player.total_ppAssists}"
+                        data-lw-ppg="${player.total_ppGoals}"
+                        data-lw-gp="${player.team_games_played}">
+                        ${formatPercentage(player.avg_ppTimeOnIcePctPerGame)}
+                    </td>
+                    `;
             (scoringCategories || []).forEach(cat => {
                 const rank_key = cat + '_cat_rank';
                 let rank = '-';
@@ -329,7 +413,7 @@
                 for (let i = 0; i < numSlots; i++) {
                     const player = playersInPos[i];
                     if (player) {
-                         tableHtml += `
+                        tableHtml += `
                             <tr class="hover:bg-gray-700/50">
                                 <td class="px-2 py-1 whitespace-nowrap text-sm font-medium text-gray-300">${pos}</td>
                                 <td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300">${player.player_name}</td>
@@ -522,6 +606,45 @@
     function setupEventListeners() {
         weekSelect.addEventListener('change', fetchAndRenderTable);
         yourTeamSelect.addEventListener('change', fetchAndRenderTable);
+
+        // --- [START] NEW MODAL CLICK LISTENER ---
+        tableContainer.addEventListener('click', (e) => {
+            const cell = e.target.closest('.pp-util-cell');
+            if (cell) {
+                const data = cell.dataset;
+                const modalTitle = document.getElementById('pp-modal-title');
+                const modalContent = document.getElementById('pp-modal-content');
+
+                modalTitle.textContent = `${data.playerName} - PP Stats`;
+
+                modalContent.innerHTML = `
+                <div class="space-y-4">
+                    <div>
+                        <h4 class="text-md font-semibold text-white mb-2">Last Game</h4>
+                        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PP TOI</dt><dd class="text-sm font-medium">${formatSecondsToMMSS(data.lgPpToi)}</dd></div>
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PP %</dt><dd class="text-sm font-medium">${formatPercentage(data.lgPpPct)}</dd></div>
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PPA</dt><dd class="text-sm font-medium">${formatNullable(data.lgPpa)}</dd></div>
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">PPG</dt><dd class="text-sm font-medium">${formatNullable(data.lgPpg)}</dd></div>
+                        </dl>
+                    </div>
+                    <div>
+                        <h4 class="text-md font-semibold text-white mb-2">Last Week</h4>
+                        <dl class="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2">
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Average PP TOI</dt><dd class="text-sm font-medium">${formatSecondsToMMSS(data.lwPpToi)}</dd></div>
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Average PP %</dt><dd class="text-sm font-medium">${formatPercentage(data.lwPpPct)}</dd></div>
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Total PPA</dt><dd class="text-sm font-medium">${formatNullable(data.lwPpa)}</dd></div>
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Total PPG</dt><dd class="text-sm font-medium">${formatNullable(data.lwPpg)}</dd></div>
+                            <div class="bg-gray-700 p-2 rounded"><dt class="text-xs text-gray-400">Games Played</dt><dd class="text-sm font-medium">${formatNullable(data.lwGp)}</dd></div>
+                        </dl>
+                    </div>
+                </div>
+                `;
+
+                document.getElementById('pp-stats-modal').classList.remove('hidden');
+            }
+        });
+        // --- [END] NEW MODAL CLICK LISTENER ---
     }
 
     init();
