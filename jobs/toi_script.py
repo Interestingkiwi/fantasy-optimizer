@@ -12,6 +12,42 @@ MOUNT_PATH = "/var/data/dbs"
 DB_FILE = os.path.join(MOUNT_PATH, "special_teams.db")
 PROJECTIONS_DB_FILE = os.path.join(MOUNT_PATH, "projections.db")
 
+
+FRANCHISE_TO_TRICODE_MAP = {
+    "Anaheim Ducks": "ANA",
+    "Boston Bruins": "BOS",
+    "Buffalo Sabres": "BUF",
+    "Calgary Flames": "CGY",
+    "Carolina Hurricanes": "CAR",
+    "Chicago Blackhawks": "CHI",
+    "Colorado Avalanche": "COL",
+    "Columbus Blue Jackets": "CBJ",
+    "Dallas Stars": "DAL",
+    "Detroit Red Wings": "DET",
+    "Edmonton Oilers": "EDM",
+    "Florida Panthers": "FLA",
+    "Los Angeles Kings": "LAK",
+    "Minnesota Wild": "MIN",
+    "Montréal Canadiens": "MTL",
+    "Nashville Predators": "NSH",
+    "New Jersey Devils": "NJD",
+    "New York Islanders": "NYI",
+    "New York Rangers": "NYR",
+    "Ottawa Senators": "OTT",
+    "Philadelphia Flyers": "PHI",
+    "Pittsburgh Penguins": "PIT",
+    "San Jose Sharks": "SJS",
+    "Seattle Kraken": "SEA",
+    "St. Louis Blues": "STL",
+    "Tampa Bay Lightning": "TBL",
+    "Toronto Maple Leafs": "TOR",
+    "Utah Mammoth": "UTA",
+    "Vancouver Canucks": "VAN",
+    "Vegas Golden Knights": "VGK",
+    "Washington Capitals": "WSH",
+    "Winnipeg Jets": "WPG"
+}
+
 def setup_database():
     """Creates the powerplay_stats table in the SQLite database if it doesn't exist."""
     conn = None
@@ -46,6 +82,29 @@ def setup_database():
             team_tricode TEXT PRIMARY KEY,
             point_pct TEXT,
             goals_against_per_game REAL
+        )
+        ''')
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_stats_summary (
+            team_tricode TEXT PRIMARY KEY,
+            pp_pct REAL,
+            pk_pct REAL,
+            gf_gm REAL,
+            ga_gm REAL,
+            sogf_gm REAL,
+            soga_gm REAL
+        )
+        ''')
+        # --- NEW TABLE FOR WEEKLY PP% / PK% ---
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_stats_weekly (
+            team_tricode TEXT PRIMARY KEY,
+            pp_pct_weekly REAL,
+            pk_pct_weekly REAL,
+            gf_gm_weekly REAL,
+            ga_gm_weekly REAL,
+            sogf_gm_weekly REAL,
+            soga_gm_weekly REAL
         )
         ''')
         conn.commit()
@@ -486,6 +545,252 @@ def fetch_daily_pp_stats():
     return True # Return True to indicate new data was fetched and written
 
 
+def fetch_team_stats_summary():
+    """
+    Fetches Team PP%, PK%, GF, GA, SF, and SA from the NHL Stats API and stores them
+    in the 'team_stats_summary' table.
+    """
+    print("\n--- Fetching Team PP% and PK% ---")
+
+    # 1. Construct the URL and Parameters
+    # Note: We dynamically set the seasonId based on the current year logic if needed,
+    # but for now we use the one from your URL (20252026).
+    API_URL = "https://api.nhle.com/stats/rest/en/team/summary"
+
+    params = {
+        "isAggregate": "false",
+        "isGame": "false",
+        "start": 0,
+        "limit": 50,
+        "cayenneExp": "seasonId=20252026 and gameTypeId=2"
+    }
+
+    all_team_data = []
+
+    try:
+        response = requests.get(API_URL, params=params)
+        response.raise_for_status()
+
+        data = response.json()
+        teams_list = data.get("data", [])
+
+        if not teams_list:
+            print("  No team stats data found in API response.")
+            return
+
+        # 2. Process the data
+        for team in teams_list:
+            franchise_name = team.get("teamFullName")
+            team_tricode = FRANCHISE_TO_TRICODE_MAP.get(franchise_name)
+            pp_pct = team.get("powerPlayPct")
+            pk_pct = team.get("penaltyKillPct")
+            gf_gm = team.get("goalsForPerGame")
+            ga_gm = team.get("goalsAgainstPerGame")
+            sogf_gm = team.get("shotsForPerGame")
+            soga_gm = team.get("shotsAgainstPerGame")
+
+
+            if team_tricode:
+                all_team_data.append((team_tricode, pp_pct, pk_pct, gf_gm, ga_gm, sogf_gm, soga_gm))
+
+    except requests.exceptions.RequestException as e:
+        print(f"  Error fetching team stats: {e}")
+        return
+
+    # 3. Write to Database
+    conn = None
+    if not all_team_data:
+        return
+
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        print(f"  Clearing 'team_stats_summary' table...")
+        cursor.execute("DELETE FROM team_stats_summary")
+
+        print(f"  Inserting {len(all_team_data)} team records (PP% / PK%)...")
+        cursor.executemany('''
+        INSERT INTO team_stats_summary (team_tricode, pp_pct, pk_pct, gf_gm, ga_gm, sogf_gm, soga_gm)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', all_team_data)
+
+        conn.commit()
+        print("  Successfully updated 'team_stats_summary' table.")
+
+    except sqlite3.Error as e:
+        print(f"  Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def fetch_team_stats_weekly():
+    """
+    Fetches Team PP% and PK% for the last 7 days (7 days ago to yesterday)
+    and stores them in the 'team_stats_weekly' table.
+    """
+    print("\n--- Fetching Weekly Team PP% and PK% (Last 7 Days) ---")
+
+    # 1. Calculate Date Range (7 days ago to yesterday)
+    today = date.today()
+    end_date = today - timedelta(days=1)
+    start_date = today - timedelta(days=7)
+
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    print(f"  Querying for date range: {start_str} to {end_str}")
+
+    # 2. Construct the URL and Parameters
+    API_URL = "https://api.nhle.com/stats/rest/en/team/summary"
+
+    params = {
+        # We set isAggregate=true to get ONE row per team, summing up all
+        # stats within the date range.
+        "isAggregate": "true",
+        "isGame": "false",
+        "start": 0,
+        "limit": 50,
+        # Filter by gameDate (inclusive) and gameType
+        "cayenneExp": f'gameDate>="{start_str}" and gameDate<="{end_str}" and gameTypeId=2'
+    }
+
+    all_team_data = []
+
+    try:
+        response = requests.get(API_URL, params=params)
+        response.raise_for_status()
+        data = response.json()
+        teams_list = data.get("data", [])
+        if not teams_list:
+            print("  No weekly team stats data found in API response.")
+            return
+
+        # 3. Process the data
+        for team in teams_list:
+            franchise_name = team.get("franchiseName")
+            team_tricode = FRANCHISE_TO_TRICODE_MAP.get(franchise_name)
+            pp_pct = team.get("powerPlayPct")
+            pk_pct = team.get("penaltyKillPct")
+            gf_gm = team.get("goalsForPerGame")
+            ga_gm = team.get("goalsAgainstPerGame")
+            sogf_gm = team.get("shotsForPerGame")
+            soga_gm = team.get("shotsAgainstPerGame")
+
+            if team_tricode:
+                all_team_data.append((team_tricode, pp_pct, pk_pct, gf_gm, ga_gm, sogf_gm, soga_gm))
+
+    except requests.exceptions.RequestException as e:
+        print(f"  Error fetching weekly team stats: {e}")
+        return
+
+    # 4. Write to Database
+    conn = None
+    if not all_team_data:
+        return
+
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        print(f"  Clearing 'team_stats_weekly' table...")
+        cursor.execute("DELETE FROM team_stats_weekly")
+
+        print(f"  Inserting {len(all_team_data)} weekly team records (PP% / PK%)...")
+        cursor.executemany('''
+        INSERT INTO team_stats_weekly (team_tricode, pp_pct_weekly, pk_pct_weekly, gf_gm_weekly, ga_gm_weekly, sogf_gm_weekly, soga_gm_weekly)
+        VALUES (?, ?, ?, ?, ?, ?, ? )
+        ''', all_team_data)
+
+        conn.commit()
+        print("  Successfully updated 'team_stats_weekly' table.")
+
+    except sqlite3.Error as e:
+        print(f"  Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def copy_team_stats_to_projections():
+    """
+    Copies the 'team_stats_summary' table from special_teams.db
+    into projections.db as a new, separate table.
+    """
+    print("\n--- Copying 'team_stats_summary' table to projections.db ---")
+    conn = None
+    try:
+        conn = sqlite3.connect(PROJECTIONS_DB_FILE)
+        cursor = conn.cursor()
+
+        print(f"  Attaching Special Teams DB: {DB_FILE}")
+        cursor.execute(f"ATTACH DATABASE '{DB_FILE}' AS special_teams_db")
+
+        print("  Reading 'team_stats_summary' from special_teams_db...")
+        df_stats = pd.read_sql_query("SELECT * FROM special_teams_db.team_stats_summary", conn)
+
+        if not df_stats.empty:
+            print(f"  Writing {len(df_stats)} records to 'team_stats_summary' table in {PROJECTIONS_DB_FILE}...")
+            df_stats.to_sql('team_stats_summary',
+                            conn,
+                            if_exists='replace',
+                            index=False,
+                            dtype={'team_tricode': 'TEXT', 'pp_pct': 'REAL', 'pk_pct': 'REAL', 'gf_gm': 'REAL', 'ga_gm': 'REAL', 'sogf_gm': 'REAL', 'soga_gm': 'REAL'})
+            conn.commit()
+            print("  Successfully copied 'team_stats_summary' table.")
+        else:
+            print("  Warning: Source table was empty.")
+
+        cursor.execute("DETACH DATABASE special_teams_db")
+
+    except Exception as e:
+        print(f"  Error during copy: {e}", file=sys.stderr)
+        try: cursor.execute("DETACH DATABASE special_teams_db")
+        except: pass
+    finally:
+        if conn: conn.close()
+
+
+def copy_team_stats_weekly_to_projections():
+    """
+    Copies the 'team_stats_weekly' table from special_teams.db
+    into projections.db as a new, separate table.
+    """
+    print("\n--- Copying 'team_stats_weekly' table to projections.db ---")
+    conn = None
+    try:
+        conn = sqlite3.connect(PROJECTIONS_DB_FILE)
+        cursor = conn.cursor()
+
+        print(f"  Attaching Special Teams DB: {DB_FILE}")
+        cursor.execute(f"ATTACH DATABASE '{DB_FILE}' AS special_teams_db")
+
+        print("  Reading 'team_stats_weekly' from special_teams_db...")
+        df_stats = pd.read_sql_query("SELECT * FROM special_teams_db.team_stats_weekly", conn)
+
+        if not df_stats.empty:
+            print(f"  Writing {len(df_stats)} records to 'team_stats_weekly' table in {PROJECTIONS_DB_FILE}...")
+            df_stats.to_sql('team_stats_weekly',
+                            conn,
+                            if_exists='replace',
+                            index=False,
+                            dtype={'team_tricode': 'TEXT', 'pp_pct_weekly': 'REAL', 'pk_pct_weekly': 'REAL', 'gf_gm_weekly': 'REAL', 'ga_gm_weekly': 'REAL', 'sogf_gm_weekly': 'REAL', 'soga_gm_weekly': 'REAL'})
+            conn.commit()
+            print("  Successfully copied 'team_stats_weekly' table.")
+        else:
+            print("  Warning: Source 'team_stats_weekly' table was empty.")
+
+        cursor.execute("DETACH DATABASE special_teams_db")
+
+    except Exception as e:
+        print(f"  Error during copy: {e}", file=sys.stderr)
+        try: cursor.execute("DETACH DATABASE special_teams_db")
+        except: pass
+    finally:
+        if conn: conn.close()
+
+
 # --- NEW FUNCTION (MOVED FROM create_projection_db.py) ---
 def join_special_teams_data():
     """
@@ -765,6 +1070,8 @@ def copy_standings_to_projections():
 if __name__ == "__main__":
     setup_database() # Creates special_teams.db if needed
     fetch_team_standings()
+    fetch_team_stats_summary()
+    fetch_team_stats_weekly()
     # Run the main data fetch and processing
     new_data_fetched = fetch_daily_pp_stats()
 
@@ -783,5 +1090,7 @@ if __name__ == "__main__":
     # Join the new summary data into projections.db
     join_special_teams_data()
     copy_standings_to_projections()
+    copy_team_stats_to_projections()
+    copy_team_stats_weekly_to_projections()
 
     print("\n--- Daily TOI Script Finished ---")
