@@ -1008,7 +1008,7 @@ def matchup_page_data():
         if conn:
             conn.close()
 
-
+@app.route('/api/matchup_team_stats', methods=['POST'])
 def get_matchup_stats():
     league_id = session.get('league_id')
     data = request.get_json()
