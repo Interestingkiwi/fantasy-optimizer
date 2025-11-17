@@ -301,10 +301,8 @@ class DBFinalizer:
             cursor = self.con.cursor()
 
             # --- MODIFIED ---
-            # --- [START OF CHANGE] ---
             self.logger.info("Importing static tables (off_days, schedule, team_schedules, team_standings,team_stats_summary, team_stats_weekly)...")
             tables_to_import = ['off_days', 'schedule', 'team_schedules', 'team_standings','team_stats_summary', 'team_stats_weekly']
-            # --- [END OF CHANGE] ---
             for table in tables_to_import:
                 # --- MODIFIED ---
                 self.logger.info(f"Importing table: {table}")
@@ -312,7 +310,7 @@ class DBFinalizer:
                 cursor.execute(f"CREATE TABLE main.{table} AS SELECT * FROM projections.{table}")
 
             # --- MODIFIED ---
-            self.logger.info("Joining player data with projections...")
+            self.logger.info("Joining player data with projections (projections)...")
             cursor.execute("DROP TABLE IF EXISTS main.joined_player_stats")
             cursor.execute("""
                 CREATE TABLE main.joined_player_stats AS
@@ -338,9 +336,63 @@ class DBFinalizer:
                 ON p.player_id = r.player_id;
             """)
 
+            # --- NEW: Create joined_player_stats_real ---
+            self.logger.info("Joining player data with to-date stats (stats_to_date)...")
+            cursor.execute("DROP TABLE IF EXISTS main.joined_player_stats_real")
+            cursor.execute("""
+                CREATE TABLE main.joined_player_stats_real AS
+                SELECT
+                    p.player_id,
+                    p.player_name,
+                    p.player_team,
+                    CASE
+                        WHEN fa.player_id IS NOT NULL THEN 'F'
+                        WHEN w.player_id IS NOT NULL THEN 'W'
+                        WHEN r.player_id IS NOT NULL THEN 'R'
+                        ELSE 'Unk'
+                    END AS availability_status,
+                    proj_real.*
+                FROM main.players AS p
+                LEFT JOIN projections.stats_to_date AS proj_real
+                ON p.player_name_normalized = proj_real.player_name_normalized
+                LEFT JOIN main.free_agents AS fa
+                ON p.player_id = fa.player_id
+                LEFT JOIN main.waiver_players AS w
+                ON p.player_id = w.player_id
+                LEFT JOIN main.rostered_players AS r
+                ON p.player_id = r.player_id;
+            """)
+
+            # --- NEW: Create joined_player_stats_combined ---
+            self.logger.info("Joining player data with combined projections (combined_projections)...")
+            cursor.execute("DROP TABLE IF EXISTS main.joined_player_stats_combined")
+            cursor.execute("""
+                CREATE TABLE main.joined_player_stats_combined AS
+                SELECT
+                    p.player_id,
+                    p.player_name,
+                    p.player_team,
+                    CASE
+                        WHEN fa.player_id IS NOT NULL THEN 'F'
+                        WHEN w.player_id IS NOT NULL THEN 'W'
+                        WHEN r.player_id IS NOT NULL THEN 'R'
+                        ELSE 'Unk'
+                    END AS availability_status,
+                    proj_comb.*
+                FROM main.players AS p
+                LEFT JOIN projections.combined_projections AS proj_comb
+                ON p.player_name_normalized = proj_comb.player_name_normalized
+                LEFT JOIN main.free_agents AS fa
+                ON p.player_id = fa.player_id
+                LEFT JOIN main.waiver_players AS w
+                ON p.player_id = w.player_id
+                LEFT JOIN main.rostered_players AS r
+                ON p.player_id = r.player_id;
+            """)
+
             self.con.commit()
             # --- MODIFIED ---
-            self.logger.info("Successfully imported static tables and joined player projections.")
+            self.logger.info("Successfully imported static tables and joined all player projection tables.")
 
         except sqlite3.Error as e:
             # --- MODIFIED ---
