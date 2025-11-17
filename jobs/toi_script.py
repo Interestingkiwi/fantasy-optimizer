@@ -1748,7 +1748,7 @@ def calculate_and_save_to_date_ranks():
         # Note: 'SVpct' from your example is 'SV_PCT' in your create_stats_to_date_table function
         goalie_stats_to_rank = {
             'GS': False, 'W': False, 'L': True, 'GA': True, 'SA': False,
-            'SV': False, 'SV_PCT': False, 'GAA': True, 'SHO': False, 'QS': False
+            'SV': False, 'SVpct': False, 'GAA': True, 'SHO': False, 'QS': False
         }
 
         # Get the set of columns that *actually* exist in the DataFrame
