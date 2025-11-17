@@ -1605,7 +1605,7 @@ def create_stats_to_date_table():
         proj_cols = [
             'nhlplayerid', 'player_name_normalized', 'player_name', 'team',
             'age', 'player_id', 'positions', 'status', 'lg_ppTimeOnIce',
-            'lg_ppTimeOnIcePctPerGame', 'lg_ppAssists', 'lg_ppGoals',
+            'lg_ppTimeOnIcePctPerGame', 'lg_ppAssists', 'lg_ppGoals', 'avg_ppTimeOnIce',
             'avg_ppTimeOnIcePctPerGame', 'total_ppAssists', 'total_ppGoals',
             'player_games_played', 'team_games_played'
         ]
