@@ -1403,15 +1403,21 @@ def fetch_and_update_goalie_stats():
         df_final['gamesPlayed'] = pd.to_numeric(df_final['gamesPlayed'], errors='coerce').fillna(0)
 
         # 3. Calculate new/updated columns
-        stats_to_convert = ['saves', 'shotsAgainst', 'wins', 'losses', 'shutouts', 'gamesStarted', 'goalsAgainst'] # Added gamesStarted
+        # Added 'wins' to this list to ensure numeric conversion before we split it
+        stats_to_convert = ['saves', 'shotsAgainst', 'wins', 'losses', 'shutouts', 'gamesStarted', 'goalsAgainst']
         for col in stats_to_convert:
             if col in df_final.columns:
                 df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
 
-        # Calculate winpct
-        df_final['winpct'] = np.where(
+        # --- CHANGED: Logic for Win Total vs Win Pct ---
+
+        # Save the raw win count into a new column 'win_total'
+        df_final['win_total'] = df_final['wins']
+
+        # Overwrite 'wins' with the percentage (Win % Per Game)
+        df_final['wins'] = np.where(
             df_final['gamesPlayed'] > 0,
-            df_final['wins'] / df_final['gamesPlayed'],
+            df_final['win_total'] / df_final['gamesPlayed'],
             0
         )
 
@@ -1487,7 +1493,7 @@ def fetch_and_update_goalie_stats():
             print(f"Writing {len(df_final)} records to 'goalie_to_date' table in {DB_FILE}...")
 
             # 'replace' will drop the table if it exists and create a new one
-            # The new table will automatically include the 'startpct' column
+            # The new table will automatically include the 'startpct' and 'win_total' columns
             df_final.to_sql('goalie_to_date', conn, if_exists='replace', index=False)
 
             print("Successfully wrote goalie stats to database.")
@@ -1648,15 +1654,17 @@ def create_stats_to_date_table():
             'gamesPlayed': 'GP',
             'goalsAgainstAverage': 'GAA',
             'losses': 'L',
-            'savePct': 'SVpct', # Renamed from user's typo
+            'savePct': 'SVpct',
             'saves': 'SV',
-            'shotsAgainst': 'SA', # Corrected from 'shotsAgainsts'
+            'shotsAgainst': 'SA',
             'shutouts': 'SHO',
-            'wins': 'W',
-            'winpct': 'winpct',
+            'wins': 'W',            # This is now the percentage
+            'win_total': 'win_total', # This is the new raw count
             'goalsAgainst': 'GA',
             'startpct': 'startpct'
         }
+        # Removed 'winpct' from rename map as requested
+
         goalie_cols_exist = [col for col in goalie_rename_map.keys() if col in df_goalie.columns]
         df_goalie_selected = df_goalie[goalie_cols_exist].rename(columns=goalie_rename_map)
 

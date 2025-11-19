@@ -1,0 +1,31 @@
+<div class="space-y-6 animate-fade-in">
+
+    <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+        <h2 class="text-2xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-500">
+            Recommended Trade Partners
+        </h2>
+        <p class="text-sm text-gray-400 mb-4">
+            These teams have strengths where you are weak, and weaknesses where you are strong.
+            <br><em>(Matching Logic: Top 33% Rank vs Bottom 33% Rank)</em>
+        </p>
+
+        <div id="trade-recommendations-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <p class="text-gray-500 italic col-span-full">Loading analysis...</p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div>
+            <h3 class="text-xl font-semibold mb-3 text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-purple-400">
+                Skater Category Analysis
+            </h3>
+            <div id="skater-table-container" class="overflow-x-auto rounded-lg shadow-md bg-gray-800 min-h-[200px]"></div>
+        </div>
+        <div>
+            <h3 class="text-xl font-semibold mb-3 text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-purple-400">
+                Goalie Category Analysis
+            </h3>
+            <div id="goalie-table-container" class="overflow-x-auto rounded-lg shadow-md bg-gray-800 min-h-[200px]"></div>
+        </div>
+    </div>
+</div>

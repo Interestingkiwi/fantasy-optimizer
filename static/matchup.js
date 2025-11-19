@@ -126,7 +126,7 @@
         // --- END NEW ---
         const cachedSim = localStorage.getItem(SIMULATION_KEY);
         simulatedMoves = cachedSim ? JSON.parse(cachedSim) : []; // MODIFIED: Assign to global
-
+        const selectedSourcing = localStorage.getItem('selectedStatSourcing') || 'projected';
         try {
           const response = await fetch('/api/matchup_team_stats', {
                 method: 'POST',
@@ -136,7 +136,8 @@
                     team1_name: yourTeamName,
                     team2_name: opponentName,
                     categories: categoriesToSend,
-                    simulated_moves: simulatedMoves // <-- ADD THIS LINE
+                    simulated_moves: simulatedMoves,
+                    sourcing: selectedSourcing
                 })
             });
 

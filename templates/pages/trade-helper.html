@@ -1,0 +1,29 @@
+<div class="p-4 text-white">
+    <div class="flex justify-between items-center mb-4">
+        <div class="flex items-center gap-4">
+            <h2 class="text-2xl font-bold">Trade Helper</h2>
+            <span class="help-icon" data-title="Trade Helper" data-text="Select 'Ideal Trade Partners' to see team strengths. Select 'Trade Compare' to compare rosters side-by-side.">?</span>
+        </div>
+    </div>
+
+    <p id="trade-helper-loading" class="text-gray-400 mb-4 h-6"></p>
+
+    <div class="border-b border-gray-700 mb-6">
+        <nav class="flex space-x-8" aria-label="Tabs">
+            <button id="nav-partners" class="subpage-nav-link border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+                onclick="loadSubPage('trade-partners')">
+                Ideal Trade Partners
+            </button>
+            <button id="nav-compare" class="subpage-nav-link border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+                onclick="loadSubPage('trade-compare')">
+                Trade Compare
+            </button>
+        </nav>
+    </div>
+
+    <div id="subpage-content" class="min-h-[400px]">
+        </div>
+
+</div>
+
+<script src="{{ url_for('static', filename='trade-helper.js') }}"></script>

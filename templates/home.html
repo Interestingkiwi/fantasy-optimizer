@@ -30,20 +30,37 @@
                 <span class="help-icon" data-title="Help" data-text="If this is your first time here, please go to League Database and initialize a database for your league. Data collected is restricted to yahoo fantasy team information, and not personal yahoo account data. To see all data collected, you can go to the Download DB tab to get a copy of everything collected.">?</span>
                 <main class="bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 w-fit">
                     <p id="timestamp-text" class="text-gray-400 text-xs">Loading league data...</p>
-                    <p class="text-gray-400 text-xs">Data is partially sourced by reddit user: <a href="https://www.reddit.com/r/fantasyhockey/comments/1n1wsqc/dtz_20252026_nhl_projections/" target="_blank" class="text-blue-400 hover:underline">Datsyuktozetterberg</a> and supplemented with additional sources and calculations</p>
+                    <p class="text-gray-400 text-xs">Projection data is sourced by reddit user: <a href="https://www.reddit.com/r/fantasyhockey/comments/1n1wsqc/dtz_20252026_nhl_projections/" target="_blank" class="text-blue-400 hover:underline">Datsyuktozetterberg</a></p>
                 </main>
-                <div id="dropdown-container" class="flex items-center gap-4">
-                      <div class="flex items-center gap-2">
-                          <label for="week-select" class="text-sm font-medium text-gray-300">Fantasy Week:</label>
-                          <select id="week-select" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
-                              <option selected>Choose a week</option>
-                          </select>
+
+                <div id="dropdown-container" class="flex items-start gap-6">
+                      <div class="flex flex-col gap-2">
+                          <div class="flex items-center gap-2 justify-end">
+                              <label for="week-select" class="text-sm font-medium text-gray-300">Fantasy Week:</label>
+                              <select id="week-select" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-48 p-2">
+                                  <option selected>Choose a week</option>
+                              </select>
+                          </div>
+                          <div class="flex items-center gap-2 justify-end">
+                              <label for="your-team-select" class="text-sm font-medium text-gray-300">Your Team:</label>
+                              <select id="your-team-select" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-48 p-2">
+                                  <option selected>Choose your team</option>
+                              </select>
+                          </div>
                       </div>
-                      <div class="flex items-center gap-2">
-                          <label for="your-team-select" class="text-sm font-medium text-gray-300">Your Team:</label>
-                          <select id="your-team-select" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
-                              <option selected>Choose your team</option>
-                          </select>
+
+                      <div class="flex flex-col gap-2">
+                          <div class="flex items-center gap-2 justify-end">
+                              <label for="stat-sourcing-select" class="text-sm font-medium text-gray-300">Stat Sourcing:</label>
+                              <select id="stat-sourcing-select" class="dropdown-select bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-48 p-2">
+                              </select>
+                          </div>
+                          <div class="flex justify-end">
+                               <div class="flex items-center gap-2 bg-gray-800 py-1.5 px-4 rounded-lg border border-gray-600 shadow-sm w-48 justify-center">
+                                  <input type="checkbox" id="global-show-raw-data" class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-500 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer">
+                                  <label for="global-show-raw-data" class="text-sm font-medium text-gray-300 cursor-pointer select-none">Show Raw Data</label>
+                              </div>
+                          </div>
                       </div>
                 </div>
             </div>
@@ -69,13 +86,15 @@
             <button data-page="goalie-planning" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
                 Goalie Planning
             </button>
+            <button data-page="trade-helper" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
+                Trade Helper
+            </button>
             <button data-page="schedules" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
                 Schedule Insights
             </button>
             <button data-page="season-history" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
                 Season History
             </button>
-<!--
             <button data-page="league-data" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
                 YFPY League Data Query
             </button>
@@ -85,7 +104,6 @@
             <button data-page="settings" class="toggle-btn px-4 py-2 text-sm font-medium rounded-lg transition">
                 Settings
             </button>
--->
             <script>
                 const isDevelopment = true; // Set to false for production
                 if (isDevelopment) {
@@ -224,5 +242,13 @@
             });
         });
     </script>
+
+    <div id="global-cat-rank-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 hidden" style="backdrop-filter: blur(2px);">
+        <div class="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-sm relative border border-gray-700">
+            <button id="global-modal-close" class="absolute top-3 right-3 text-gray-400 hover:text-white text-2xl leading-none">&times;</button>
+            <h3 id="global-modal-title" class="text-xl font-bold text-white mb-4">Category Breakdown</h3>
+            <div id="global-modal-content" class="text-gray-300"></div>
+        </div>
+    </div>
 </body>
 </html>
