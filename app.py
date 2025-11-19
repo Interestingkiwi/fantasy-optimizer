@@ -220,6 +220,20 @@ from api_v1 import api as api_v1_blueprint
 app.register_blueprint(api_v1_blueprint)
 
 
+def get_stat_source_table(sourcing_key):
+    """
+    Returns the correct, safe table name based on the sourcing key.
+    Defaults to 'joined_player_stats' for safety.
+    """
+    if sourcing_key == 'todate':
+        return 'joined_player_stats_real'
+    elif sourcing_key == 'combined':
+        return 'joined_player_stats_combined'
+    else:
+        # Default to 'projected' (the original table)
+        return 'joined_player_stats'
+
+
 def get_db_connection_for_league(league_id):
     """
     Finds the league's database, downloads it from GCS if it's newer,
