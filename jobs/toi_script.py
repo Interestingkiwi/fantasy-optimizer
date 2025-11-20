@@ -1,11 +1,13 @@
 import requests
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import time
 import sqlite3
 import os
 import numpy as np
 import sys
+import unicodedata
+import re
 
 
 MOUNT_PATH = "/var/data/dbs"
