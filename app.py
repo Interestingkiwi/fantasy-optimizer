@@ -612,6 +612,11 @@ def _calculate_unused_spots(days_in_week, active_players, lineup_settings, simul
             # Check both 'game_dates_this_week' (for base roster) and 'game_dates_this_week_full' (for added players)
             game_dates = p.get('game_dates_this_week') or p.get('game_dates_this_week_full', [])
             if day_str in game_dates:
+                # --- FIX START: Filter out IR/IR+ players ---
+                eligible_ops = (p.get('eligible_positions') or p.get('positions', '')).split(',')
+                if any(pos.strip().startswith('IR') for pos in eligible_ops):
+                    continue
+                # --- FIX END ---
                 players_playing_today.append(p)
 
         daily_lineup = get_optimal_lineup(players_playing_today, lineup_settings)
@@ -3138,6 +3143,11 @@ def get_roster_data():
             for p in daily_active_roster:
                 # Check if they have a game today
                 if day_str in p.get('game_dates_this_week', []):
+                    # --- FIX START: Filter out IR/IR+ players ---
+                    eligible_ops = (p.get('eligible_positions') or p.get('positions', '')).split(',')
+                    if any(pos.strip().startswith('IR') for pos in eligible_ops):
+                        continue
+                    # --- FIX END ---
                     players_playing_today.append(p)
 
             if players_playing_today:
