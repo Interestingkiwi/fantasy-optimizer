@@ -1576,6 +1576,7 @@ def update_league_db(yq, lg, league_id, data_dir, logger, capture_lineups=False)
         sanitized_name = re.sub(r'[\\/*?:"<>|]', "", league_name_str)
         db_filename = f"yahoo-{league_id}-{sanitized_name}.db"
         db_path = os.path.join(data_dir, db_filename)
+        logger.info(f"Database will be built at: {db_path}")
 
         if capture_lineups:
             # --- MODIFIED ---
@@ -1637,10 +1638,12 @@ def update_league_db(yq, lg, league_id, data_dir, logger, capture_lineups=False)
         # --- DB Finalization ---
         # --- MODIFIED ---
         logger.info("--- Starting Database Finalization Process ---")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        SERVER_DIR = os.path.join(script_dir, 'server')
-        PLAYER_IDS_DB_PATH = os.path.join(SERVER_DIR, 'yahoo_player_ids.db')
-        PROJECTIONS_DB_PATH = os.path.join(SERVER_DIR, 'projections.db')
+
+        PLAYER_IDS_DB_PATH = os.path.join(data_dir, 'yahoo_player_ids.db')
+        PROJECTIONS_DB_PATH = os.path.join(data_dir, 'projections.db')
+
+        logger.info(f"Using Player IDs DB from: {PLAYER_IDS_DB_PATH}")
+        logger.info(f"Using Projections DB from: {PROJECTIONS_DB_PATH}")
 
         # --- MODIFIED: Pass logger ---
         finalizer = DBFinalizer(db_path, logger)
@@ -1657,6 +1660,28 @@ def update_league_db(yq, lg, league_id, data_dir, logger, capture_lineups=False)
 
         # --- MODIFIED ---
         logger.info("--- Database Finalization Process Complete ---")
+
+        logger.info("Uploading finalized database to Google Cloud Storage...")
+        try:
+            # This uses the GOOGLE_APPLICATION_CREDENTIALS secret file automatically
+            storage_client = storage.Client()
+            bucket_name = os.environ.get('GCS_BUCKET_NAME')
+            if not bucket_name:
+                raise Exception("GCS_BUCKET_NAME environment variable not set.")
+
+            bucket = storage_client.bucket(bucket_name)
+
+            # This is the "path" inside your GCS bucket
+            remote_db_path = f'league-dbs/{db_filename}'
+            blob = bucket.blob(remote_db_path)
+
+            blob.upload_from_filename(db_path)
+            logger.info(f"Successfully uploaded {db_filename} to GCS bucket {bucket_name} at {remote_db_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to upload to GCS: {e}", exc_info=True)
+            return {'success': False, 'error': f"DB built but failed to upload: {e}"}
+
         timestamp = os.path.getmtime(db_path)
         # --- MODIFIED ---
         logger.info(f"Database for '{sanitized_name}' updated successfully.")
