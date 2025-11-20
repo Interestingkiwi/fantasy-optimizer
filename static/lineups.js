@@ -345,19 +345,34 @@
                     </td>
             `;
 
+            // --- MODIFIED: Use rank color in both Raw and Rank views ---
             (categories || []).forEach(cat => {
-                let displayValue = '-', cellStyle = '';
+                const rank = player[cat + '_cat_rank'];
+                const heatColor = getHeatmapColor(rank);
+                let displayValue = '-';
+
                 if (showRaw) {
                     const val = player[cat];
                     displayValue = (val != null && !isNaN(val)) ? parseFloat(val).toFixed(2).replace(/[.,]00$/, "") : (val || '-');
-                    cellStyle = 'text-gray-400';
                 } else {
-                    const rank = player[cat + '_cat_rank'];
                     displayValue = (rank != null) ? Math.round(rank) : '-';
-                    cellStyle = `background-color: ${getHeatmapColor(rank)}; color: #1f2937; font-weight: 600;`;
                 }
-                tableHtml += `<td class="px-2 py-1 text-center text-sm ${cellStyle}" style="${cellStyle.includes(':') ? cellStyle : ''}">${displayValue}</td>`;
+
+                let cellStyle = '';
+                let cellClass = 'px-2 py-1 text-center text-sm';
+
+                if (heatColor) {
+                    // Apply heat color with dark text for contrast
+                    cellStyle = `background-color: ${heatColor}; color: #1f2937; font-weight: 600;`;
+                } else {
+                    // Default gray text if no rank available
+                    cellClass += ' text-gray-400';
+                }
+
+                tableHtml += `<td class="${cellClass}" style="${cellStyle}">${displayValue}</td>`;
             });
+            // --- END MODIFICATION ---
+
             tableHtml += `</tr>`;
         });
 

@@ -578,21 +578,34 @@
                 html += `<td class="px-2 py-1 whitespace-nowrap text-sm text-gray-300 cursor-pointer hover:bg-gray-700 pp-util-cell" data-player-name="${p.player_name}" data-lg-pp-toi="${p.lg_ppTimeOnIce}" data-lg-pp-pct="${p.lg_ppTimeOnIcePctPerGame}" data-lg-ppa="${p.lg_ppAssists}" data-lg-ppg="${p.lg_ppGoals}" data-lw-pp-toi="${p.avg_ppTimeOnIce}" data-lw-pp-pct="${p.avg_ppTimeOnIcePctPerGame}" data-lw-ppa="${p.total_ppAssists}" data-lw-ppg="${p.total_ppGoals}" data-lw-gp="${p.team_games_played}">${formatPercentage(p.avg_ppTimeOnIcePctPerGame)}</td>`;
             } else { html += `<td class="px-2 py-1 text-center text-gray-500">-</td>`; }
 
+            // --- MODIFIED: Use rank color in both Raw and Rank views ---
             categories.forEach(cat => {
-                let displayValue = '-', cellStyle = '';
+                const rank = p[cat + '_cat_rank'];
+                const heatColor = getHeatmapColor(rank);
+                let displayValue = '-';
+
                 if (showRaw) {
-                    // --- Raw Data ---
                     const val = p[cat];
                     displayValue = (val != null && !isNaN(val)) ? parseFloat(val).toFixed(2).replace(/[.,]00$/, "") : (val || '-');
-                    cellStyle = 'text-gray-400';
                 } else {
-                    // --- Rank Data ---
-                    const rank = p[cat + '_cat_rank'];
                     displayValue = (rank != null) ? Math.round(rank) : '-';
-                    cellStyle = `background-color: ${getHeatmapColor(rank)}; color: #1f2937; font-weight: 600;`;
                 }
-                html += `<td class="px-2 py-1 text-center font-semibold ${cellStyle}" style="${cellStyle.includes(':') ? cellStyle : ''}">${displayValue}</td>`;
+
+                let cellStyle = '';
+                let cellClass = 'px-2 py-1 text-center font-semibold';
+
+                if (heatColor) {
+                    // Apply heat color with dark text for contrast
+                    cellStyle = `background-color: ${heatColor}; color: #1f2937; font-weight: 600;`;
+                } else {
+                    // Default gray text if no rank available
+                    cellClass += ' text-gray-400';
+                }
+
+                html += `<td class="${cellClass}" style="${cellStyle}">${displayValue}</td>`;
             });
+            // --- END MODIFICATION ---
+
             html += `</tr>`;
         });
         html += `</tbody></table></div>`;

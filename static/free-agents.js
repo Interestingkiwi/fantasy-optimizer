@@ -492,19 +492,34 @@
                             <td class="px-2 py-2 whitespace-nowrap text-sm font-bold text-blue-400 cursor-pointer hover:text-blue-300 cat-rank-cell" data-player-id="${player.player_id}">${player.total_cat_rank}</td>
                     `;
 
-                    categories.forEach(cat => {
-                        let displayValue = '-', cellStyle = '';
+                    // --- MODIFIED: Use rank color in both Raw and Rank views ---
+                    (categories || []).forEach(cat => {
+                        const rank = player[`${cat}_cat_rank`];
+                        const heatColor = getHeatmapColor(rank);
+                        let displayValue = '-';
+
                         if (showRaw) {
                             const val = player[cat];
                             displayValue = (val != null && !isNaN(val)) ? parseFloat(val).toFixed(2).replace(/[.,]00$/, "") : (val || '-');
-                            cellStyle = 'text-gray-400';
                         } else {
-                            const rank = player[`${cat}_cat_rank`];
                             displayValue = (rank != null) ? rank.toFixed(2) : '-';
-                            cellStyle = `background-color: ${getHeatmapColor(rank)}; color: #1f2937; font-weight: 600;`;
                         }
-                        tableHtml += `<td class="px-2 py-1 whitespace-nowrap text-sm text-center font-semibold ${cellStyle}" style="${cellStyle.includes(':') ? cellStyle : ''}">${displayValue}</td>`;
+
+                        let cellStyle = '';
+                        let cellClass = 'px-2 py-1 whitespace-nowrap text-sm text-center font-semibold';
+
+                        if (heatColor) {
+                            // Apply heat color with dark text for contrast
+                            cellStyle = `background-color: ${heatColor}; color: #1f2937; font-weight: 600;`;
+                        } else {
+                            // Default gray text if no rank available
+                            cellClass += ' text-gray-400';
+                        }
+
+                        tableHtml += `<td class="${cellClass}" style="${cellStyle}">${displayValue}</td>`;
                     });
+                    // --- END MODIFICATION ---
+
                     tableHtml += `</tr>`;
                 });
             }

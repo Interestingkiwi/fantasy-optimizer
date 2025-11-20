@@ -1685,6 +1685,7 @@ def get_transaction_history_data():
         # --- END MODIFIED ---
 
         start_date, end_date = None, None
+        transaction_start_date = None # NEW: Separate date for transaction lookup
         is_weekly_view = False
 
         if week != 'all':
@@ -1696,7 +1697,13 @@ def get_transaction_history_data():
                 if week_dates:
                     start_date = week_dates['start_date']
                     end_date = week_dates['end_date']
+
+                    # --- MODIFIED: Calculate transaction window start (2 days prior) ---
+                    s_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    transaction_start_date = (s_date_obj - timedelta(days=2)).strftime('%Y-%m-%d')
+
                     logging.info(f"Found week dates: {start_date} to {end_date}")
+                    logging.info(f"Transaction window: {transaction_start_date} to {end_date}")
                 else:
                     logging.warning(f"Could not find week_num = {week_num_int}")
                     is_weekly_view = False
@@ -1720,8 +1727,10 @@ def get_transaction_history_data():
                     WHERE CAST(fantasy_team AS TEXT) = ? AND move_type = ?
                 """
                 if start_date and end_date:
+                    # --- MODIFIED: Use transaction_start_date ---
                     sql_query += " AND transaction_date >= ? AND transaction_date <= ?"
-                    sql_params.extend([start_date, end_date])
+                    # Use the 2-day buffer start date for transactions
+                    sql_params.extend([transaction_start_date, end_date])
 
                 sql_query += " ORDER BY transaction_date, player_name"
                 cursor.execute(sql_query, tuple(sql_params))
@@ -1745,7 +1754,7 @@ def get_transaction_history_data():
                           AND date_ >= ? AND date_ <= ?
                           AND lineup_pos = 'g'
                         LIMIT 1
-                    """, (player_id_str, start_date, end_date))
+                    """, (player_id_str, start_date, end_date)) # Keep original start_date for stats
                     is_goalie = cursor.fetchone() is not None
                     # --- END REVERTED ---
 
@@ -1756,7 +1765,7 @@ def get_transaction_history_data():
                         WHERE CAST(player_id AS TEXT) = ?
                           AND date_ >= ? AND date_ <= ?
                         GROUP BY category
-                    """, (player_id_str, start_date, end_date))
+                    """, (player_id_str, start_date, end_date)) # Keep original start_date for stats
 
                     stats_raw = cursor.fetchall()
                     player_stat_map = {row['category']: row['total'] for row in stats_raw}
@@ -1772,7 +1781,7 @@ def get_transaction_history_data():
                             GROUP BY date_
                             HAVING total_stats > 0
                         ) T
-                    """, (player_id_str, start_date, end_date))
+                    """, (player_id_str, start_date, end_date)) # Keep original start_date for stats
 
                     gp_row = cursor.fetchone()
                     if gp_row:
@@ -1840,13 +1849,14 @@ def get_transaction_history_data():
             # --- END DEBUGGING ---
 
             # Get all 'add' transactions for the week
+            # --- MODIFIED: Use transaction_start_date (2 days prior) ---
             cursor.execute("""
                 SELECT transaction_date, player_name, player_id, fantasy_team
                 FROM transactions
                 WHERE move_type = 'add'
                   AND transaction_date >= ? AND transaction_date <= ?
                 ORDER BY fantasy_team, transaction_date, player_name
-            """, (start_date, end_date))
+            """, (transaction_start_date, end_date))
 
             all_adds = decode_dict_values([dict(row) for row in cursor.fetchall()])
             logging.info(f"Found {len(all_adds)} total adds for the league in week {week}.")
@@ -1873,6 +1883,7 @@ def get_transaction_history_data():
                 player_stats = {'Player': player['player_name'], 'GP': 0}
 
                 # --- REVERTED: Query 1: Check for 'g' in daily_player_stats ---
+                # Keep using original start_date for stats
                 cursor.execute("""
                     SELECT 1
                     FROM daily_player_stats
@@ -1885,6 +1896,7 @@ def get_transaction_history_data():
                 # --- END REVERTED ---
 
                 # --- Query 2: Get aggregated stats (simplified) ---
+                # Keep using original start_date for stats
                 cursor.execute("""
                     SELECT category, SUM(stat_value) as total
                     FROM daily_player_stats
@@ -1897,6 +1909,7 @@ def get_transaction_history_data():
                 player_stat_map = {row['category']: row['total'] for row in stats_raw}
 
                 # --- MODIFIED: Query 3: Get Games Played with non-zero stats *for that team* ---
+                # Keep using original start_date for stats
                 cursor.execute("""
                     SELECT COUNT(T.date_) as games_played
                     FROM (
@@ -3026,20 +3039,28 @@ def get_roster_data():
             WHERE r.team_id = ?
         """, (team_id,))
         all_players_raw = cursor.fetchall()
-        all_players = decode_dict_values([dict(row) for row in all_players_raw])
+        base_roster_players = decode_dict_values([dict(row) for row in all_players_raw])
+
+        # Create a master list for display that includes base roster + added players
+        all_players = list(base_roster_players)
 
         if simulated_moves:
-            dropped_ids = {int(m['dropped_player']['player_id']) for m in simulated_moves}
-            all_players = [p for p in all_players if int(p.get('player_id', 0)) not in dropped_ids]
+            # Logic change: We do NOT filter drops from all_players (display list).
+            # We only append adds. Daily logic handles who is active when.
+            existing_ids = {int(p.get('player_id', 0)) for p in all_players}
+
             for move in simulated_moves:
-                # Ensure added player has basic fields
                 added = move['added_player']
                 # Map fields if they differ (free agent object vs roster object)
                 if 'positions' in added and 'eligible_positions' not in added:
                     added['eligible_positions'] = added['positions']
                 if 'player_team' in added and 'team' not in added:
                     added['team'] = added['player_team']
-                all_players.append(added)
+
+                # Only append if not already in the list (e.g. drop/add same player)
+                if int(added.get('player_id', 0)) not in existing_ids:
+                    all_players.append(added)
+                    existing_ids.add(int(added.get('player_id', 0)))
 
         # 8. Fetch Stats & Ranks for EVERYONE (Base + Sim)
         cat_rank_columns = [f"{cat}_cat_rank" for cat in all_scoring_categories]
@@ -3136,8 +3157,11 @@ def get_roster_data():
 
         for day_date in days_in_week:
             day_str = day_date.strftime('%Y-%m-%d')
-            # Pass ALL players (including sim) to roster calc
-            daily_active_roster = _get_daily_simulated_roster(all_players, simulated_moves, day_str)
+            # Pass base_roster_players (the original DB roster) to the calculation.
+            # The helper function will:
+            # 1. Check base roster players against drops for this date.
+            # 2. Check simulated moves for adds active on this date.
+            daily_active_roster = _get_daily_simulated_roster(base_roster_players, simulated_moves, day_str)
 
             players_playing_today = []
             for p in daily_active_roster:
@@ -3160,7 +3184,8 @@ def get_roster_data():
         for player in all_players:
             player['starts_this_week'] = player_starts_counter.get(player.get('player_id'), 0)
 
-        unused_roster_spots = _calculate_unused_spots(days_in_week, all_players, lineup_settings, simulated_moves)
+        # Pass base_roster_players here as well
+        unused_roster_spots = _calculate_unused_spots(days_in_week, base_roster_players, lineup_settings, simulated_moves)
 
         return jsonify({
             'players': all_players,
