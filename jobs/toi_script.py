@@ -1312,6 +1312,13 @@ def fetch_and_update_scoring_to_date():
     try:
         df = pd.DataFrame(all_players_data)
 
+        # --- NEW: Drop Duplicates based on Player ID ---
+        initial_count = len(df)
+        df.drop_duplicates(subset=['playerId'], keep='first', inplace=True)
+        if len(df) != initial_count:
+             print(f"Dropped {initial_count - len(df)} duplicate skater records.")
+        # -----------------------------------------------
+
         # --- NEW: Add Normalized Name Column ---
         if 'skaterFullName' in df.columns:
              df['player_name_normalized'] = df['skaterFullName'].apply(normalize_name)
@@ -1322,6 +1329,7 @@ def fetch_and_update_scoring_to_date():
             'ppGoals', 'ppPoints', 'shootingPct', 'timeOnIcePerGame', 'shots'
         ]
 
+        # ... (rest of function remains the same) ...
         existing_cols = [col for col in required_cols if col in df.columns]
         df = df[existing_cols]
 
@@ -1437,6 +1445,13 @@ def fetch_and_update_bangers_stats():
     try:
         df = pd.DataFrame(all_players_data)
 
+        # --- NEW: Drop Duplicates based on Player ID ---
+        initial_count = len(df)
+        df.drop_duplicates(subset=['playerId'], keep='first', inplace=True)
+        if len(df) != initial_count:
+             print(f"Dropped {initial_count - len(df)} duplicate banger records.")
+        # -----------------------------------------------
+
         # --- NEW: Add Normalized Name Column ---
         if 'skaterFullName' in df.columns:
              df['player_name_normalized'] = df['skaterFullName'].apply(normalize_name)
@@ -1532,6 +1547,13 @@ def fetch_and_update_goalie_stats():
     try:
         df = pd.DataFrame(all_goalie_data)
 
+        # --- NEW: Drop Duplicates based on Player ID ---
+        initial_count = len(df)
+        df.drop_duplicates(subset=['playerId'], keep='first', inplace=True)
+        if len(df) != initial_count:
+             print(f"Dropped {initial_count - len(df)} duplicate goalie records.")
+        # -----------------------------------------------
+
         # --- NEW: Add Normalized Name Column ---
         if 'goalieFullName' in df.columns:
              df['player_name_normalized'] = df['goalieFullName'].apply(normalize_name)
@@ -1543,6 +1565,7 @@ def fetch_and_update_goalie_stats():
             'shutouts', 'wins', 'goalsAgainst'
         ]
 
+        # ... (rest of function remains the same) ...
         existing_cols = [col for col in required_cols if col in df.columns]
         df_final = df[existing_cols].copy()
 
@@ -1965,66 +1988,178 @@ def calculate_and_save_to_date_ranks():
 
 def create_combined_projections():
     """
-    Merges 'projections' and 'stats_to_date' using Smart Join logic.
-    Averages data columns where they exist in both.
+    Creates a new table 'combined_projections' by merging 'projections'
+    and 'stats_to_date'.
+
+    - Identity columns are carried over (prioritizing 'stats_to_date').
+    - Data columns existing in both tables are averaged.
+    - Data columns existing in only one table are carried over.
     """
     print(f"\n--- Creating 'combined_projections' table in {PROJECTIONS_DB_FILE} ---")
     conn = None
     try:
         conn = sqlite3.connect(PROJECTIONS_DB_FILE)
+        cursor = conn.cursor()
+
+        # 1. Check if source tables exist
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='projections'")
+        if cursor.fetchone() is None:
+            print(f"  Error: 'projections' table does not exist. Aborting.")
+            return
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='stats_to_date'")
+        if cursor.fetchone() is None:
+            print(f"  Error: 'stats_to_date' table does not exist. Aborting.")
+            return
+
+        # 2. Load tables into DataFrames
+        print("  Reading 'projections' and 'stats_to_date' tables...")
         df_proj = pd.read_sql_query("SELECT * FROM projections", conn)
         df_stats = pd.read_sql_query("SELECT * FROM stats_to_date", conn)
 
+        # --- FIX: Standardize conflicting column names ('gp' vs 'GP') ---
         if 'gp' in df_proj.columns:
+            print("  Standardizing 'gp' column to 'GP'...")
             df_proj = df_proj.rename(columns={'gp': 'GP'})
+        # --- END FIX ---
 
-        # Define identity vs data columns
+        if df_proj.empty:
+            print("  Warning: 'projections' table is empty.")
+            return
+        if df_stats.empty:
+            print("  Warning: 'stats_to_date' table is empty.")
+            return
+
+        # 3. Perform the 'outer' merge
+        df_merged = pd.merge(df_proj, df_stats, on='nhlplayerid', how='outer', suffixes=('_proj', '_stats'))
+
+        # This will be our new, final DataFrame. Start with a COPY to de-fragment.
+        df_combined = df_merged[['nhlplayerid']].dropna().astype(int).copy()
+
+        # Dictionary to store all final, processed columns before assignment
+        final_processed_data = {}
+
+        # --- Helper function to ensure Series is returned and numeric conversion is done ---
+        def safe_get_and_convert(accessor):
+            if accessor is None:
+                # Return a Series of NaNs matching the index length
+                return pd.Series(np.nan, index=df_merged.index)
+
+            # Retrieve the column slice
+            series = df_merged.get(accessor)
+
+            if series is None:
+                return pd.Series(np.nan, index=df_merged.index)
+
+            # Apply conversion and fill NaNs *within* the series with 0
+            return pd.to_numeric(series, errors='coerce').fillna(0)
+
+
+        # 4. Define the identity columns
         identity_cols = [
             'player_name_normalized', 'player_name', 'team', 'age', 'player_id',
             'positions', 'status', 'lg_ppTimeOnIce', 'lg_ppTimeOnIcePctPerGame',
             'lg_ppAssists', 'lg_ppGoals', 'avg_ppTimeOnIce', 'avg_ppTimeOnIcePctPerGame',
-            'total_ppAssists', 'total_ppGoals', 'player_games_played', 'team_games_played',
-            'nhlplayerid'
+            'total_ppAssists', 'total_ppGoals', 'player_games_played', 'team_games_played'
         ]
 
-        # Columns in stats that are NOT identity are Data columns
-        stats_data_cols = [c for c in df_stats.columns if c not in identity_cols]
+        print("  Processing identity columns (prioritizing _stats)...")
+        for col in identity_cols:
+            col_proj_suffixed = f"{col}_proj"
+            col_stats_suffixed = f"{col}_stats"
+            result_series = None
 
-        # Use Smart Join to attach Stats to Projections
-        # Note: This returns Projections + Stats columns (aligned correctly)
-        # Any stats rows that didn't match ID+Team OR Name are logged to unmatched
-        df_combined = perform_smart_join(df_proj, df_stats, stats_data_cols, 'stats_to_date_combine', conn)
+            # Case 1: Overlap. Prioritize stats, fill with proj.
+            if col_stats_suffixed in df_merged.columns and col_proj_suffixed in df_merged.columns:
+                result_series = df_merged[col_stats_suffixed].fillna(df_merged[col_proj_suffixed])
 
-        # --- AVERAGING LOGIC ---
-        # Now df_combined has the projections data (original) AND the stats data (joined)
-        # BUT perform_smart_join usually overwrites if column names match.
-        # Wait, perform_smart_join creates a Coalesced series.
-        # If df_proj had 'G' and df_stats had 'G', perform_smart_join would have filled 'G' with Stats data?
-        # Actually, my implementation of perform_smart_join fills NaNs. It does NOT average.
+            # Case 2: No overlap, original name.
+            elif col in df_merged.columns:
+                result_series = df_merged[col]
 
-        # To support Averaging, we need the raw numbers from both.
-        # Since standard columns (G, A, P) don't exist in 'projections' usually (only in stats),
-        # we might just need to carry over.
-        # IF projections DOES have 'G', 'A', 'P' (it shouldn't, it's base data), then we average.
+            # Case 3: Exists only in one side (suffixed but no counterpart)
+            elif col_stats_suffixed in df_merged.columns:
+                 result_series = df_merged[col_stats_suffixed]
+            elif col_proj_suffixed in df_merged.columns:
+                 result_series = df_merged[col_proj_suffixed]
 
-        # Check if we have overlap
-        overlap_cols = [c for c in stats_data_cols if c in df_proj.columns]
+            if result_series is not None:
+                final_processed_data[col] = result_series.copy() # Store result
 
-        if overlap_cols:
-            print(f"  Averaging {len(overlap_cols)} overlapping columns...")
-            # This is tricky because perform_smart_join coalesced them.
-            # To do this correctly with averaging, we should have renamed stats cols before joining.
-            pass # Assuming typical flow where Projections DB is meta-data and Stats is performance data.
 
-        # Write to DB
-        print(f"  Writing {len(df_combined)} records to 'combined_projections'...")
-        df_combined.to_sql('combined_projections', conn, if_exists='replace', index=False)
+        # 5. Define the data columns (everything else)
+        identity_cols_with_key = set(identity_cols + ['nhlplayerid'])
+        proj_data_cols = set(df_proj.columns) - identity_cols_with_key
+        stats_data_cols = set(df_stats.columns) - identity_cols_with_key
+        all_data_cols = proj_data_cols.union(stats_data_cols)
+
+        print(f"  Processing {len(all_data_cols)} data columns (averaging/carrying over)...")
+
+        for col in all_data_cols:
+            col_proj_suffixed = f"{col}_proj"
+            col_stats_suffixed = f"{col}_stats"
+
+            # --- Identify Accessors (Must match logic from step 4 of original function) ---
+            proj_accessor = col_proj_suffixed if col_proj_suffixed in df_merged.columns else col if col in df_proj.columns and col in all_data_cols else None
+            stats_accessor = col_stats_suffixed if col_stats_suffixed in df_merged.columns else col if col in df_stats.columns and col in all_data_cols else None
+
+            # 1. Retrieve Series Safely and Convert (FIXES NUMPY ERROR)
+            series_proj = safe_get_and_convert(proj_accessor)
+            series_stats = safe_get_and_convert(stats_accessor)
+
+            # 2. Apply Logic
+            is_overlap = (proj_accessor is not None) and (stats_accessor is not None)
+
+            if is_overlap:
+                # Case 1: Overlap -> Average them
+                final_processed_data[col] = (series_proj + series_stats) / 2
+
+            elif stats_accessor is not None:
+                # Case 2: Only in stats -> Carry over stats
+                final_processed_data[col] = series_stats
+
+            elif proj_accessor is not None:
+                # Case 3: Only in projections -> Carry over projections
+                final_processed_data[col] = series_proj
+
+
+        # 6. Mass Assignment (FIX for PerformanceWarning)
+        df_final = df_combined.merge(
+            pd.DataFrame(final_processed_data, index=df_merged.index),
+            left_index=True,
+            right_index=True,
+            how='left'
+        )
+
+        # 7. Final Cleanup and Save
+        print(f"  Saving {len(df_final)} records to 'combined_projections' table...")
+
+        # Ensure key integer types are correct
+        dtype_map = {}
+        if 'nhlplayerid' in df_final.columns:
+            dtype_map['nhlplayerid'] = 'INTEGER'
+        if 'player_id' in df_final.columns:
+            df_final['player_id'] = pd.to_numeric(df_final['player_id'], errors='coerce').fillna(pd.NA).astype('Int64')
+            dtype_map['player_id'] = 'INTEGER'
+
+        df_final.to_sql(
+            'combined_projections',
+            conn,
+            if_exists='replace',
+            index=False,
+            dtype=dtype_map
+        )
+
         conn.commit()
+        print("  Successfully created 'combined_projections' table.")
 
+    except sqlite3.Error as e:
+        print(f"Database error during 'combined_projections' creation: {e}", file=sys.stderr)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"An error occurred during 'combined_projections' creation: {e}", file=sys.stderr)
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
 
 
 if __name__ == "__main__":
